@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pet-hospital-mcp"
+version = "0.1.0"
+description = "MCP service exposing pet hospital REST API to AI agents"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=2.0.0,<3",
+    "httpx>=0.27,<1",
+    "pydantic>=2.0,<3",
+    "uvicorn>=0.30,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9",
+    "pytest-asyncio>=0.24,<1",
+    "respx>=0.22,<1",
+]
+
+[project.scripts]
+pet-hospital-mcp = "pet_hospital_mcp.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pet_hospital_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

@@ -1,0 +1,12 @@
+{
+  "ai": {
+    "baseUrl": "https://api.xiaomimimo.com/v1",
+    "apiKey": "sk-c0ndkg9x81ylxe7ba4un30evoae2plfqr4byy5dptiovtp6b",
+    "model": "mimo-v2.6-flash"
+  },
+  "mcp": {
+    "enabledTools": [
+      "查询宠物列表"
+    ]
+  }
+}

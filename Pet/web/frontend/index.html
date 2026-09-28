@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🐾 宠物医院 AI 助手</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #f5f5f5; --card: #fff; --primary: #4a90d9; --primary-hover: #357abd;
+  --text: #333; --text2: #666; --border: #e0e0e0; --danger: #e74c3c;
+  --success: #27ae60; --radius: 10px; --shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+
+/* ── Header ─────────────────────────── */
+.header { background: var(--primary); color: #fff; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.header h1 { font-size: 18px; }
+.nav-btns { display: flex; gap: 8px; }
+.nav-btns button { background: rgba(255,255,255,0.2); color: #fff; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.nav-btns button:hover, .nav-btns button.active { background: rgba(255,255,255,0.35); }
+
+/* ── Pages ──────────────────────────── */
+.page { display: none; flex: 1; min-height: 0; }
+.page.active { display: flex; flex-direction: column; }
+
+/* ── Settings ───────────────────────── */
+.settings { padding: 20px; overflow-y: auto; max-width: 700px; margin: 0 auto; width: 100%; flex: 1; min-height: 0; }
+.settings h2 { margin-bottom: 16px; font-size: 20px; }
+.card { background: var(--card); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow); }
+.card h3 { font-size: 15px; margin-bottom: 12px; color: var(--text2); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: 13px; color: var(--text2); margin-bottom: 4px; }
+.field input, .field select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
+.field input:focus, .field select:focus { outline: none; border-color: var(--primary); }
+.btn { padding: 8px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.status-ok { color: var(--success); font-size: 12px; }
+.status-err { color: var(--danger); font-size: 12px; }
+
+/* ── MCP Tool Toggles ──────────────── */
+.tool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.tool-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--bg); border-radius: 6px; font-size: 13px; }
+.tool-item input[type="checkbox"] { accent-color: var(--primary); }
+.tool-item .tool-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+
+/* ── Chat ───────────────────────────── */
+.chat-wrap { flex: 1; display: flex; flex-direction: column; max-width: 800px; margin: 0 auto; width: 100%; min-height: 0; }
+.messages { flex: 1; overflow-y: auto; padding: 16px; min-height: 0; }
+.msg { margin-bottom: 12px; display: flex; }
+.msg.user { justify-content: flex-end; }
+.msg .bubble { max-width: 75%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.msg.user .bubble { background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
+.msg.ai .bubble { background: var(--card); box-shadow: var(--shadow); border-bottom-left-radius: 4px; }
+.msg.tool .bubble { background: #fff3cd; color: #856404; font-size: 12px; border: 1px solid #ffc107; }
+.input-bar { padding: 12px 16px; background: var(--card); border-top: 1px solid var(--border); display: flex; gap: 8px; flex-shrink: 0; }
+.input-bar input { flex: 1; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+.input-bar input:focus { outline: none; border-color: var(--primary); }
+.input-bar button { padding: 10px 20px; }
+.typing { color: var(--text2); font-size: 13px; padding: 0 16px 8px; display: none; }
+
+/* ── Scrollbar ──────────────────────── */
+.messages::-webkit-scrollbar, .settings::-webkit-scrollbar { width: 6px; }
+.messages::-webkit-scrollbar-thumb, .settings::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+.messages::-webkit-scrollbar-thumb:hover, .settings::-webkit-scrollbar-thumb:hover { background: #aaa; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🐾 宠物医院 AI 助手</h1>
+  <div class="nav-btns">
+    <button class="active" onclick="showPage('chat')">💬 对话</button>
+    <button onclick="showPage('settings')">⚙️ 设置</button>
+  </div>
+</div>
+
+<!-- ── Chat Page ──────────────────── -->
+<div id="page-chat" class="page active">
+  <div class="chat-wrap">
+    <div id="messages" class="messages"></div>
+    <div id="typing" class="typing">AI 正在思考…</div>
+    <div class="input-bar">
+      <input id="userInput" placeholder="输入消息，如：查询所有金毛犬…" onkeydown="if(event.key==='Enter')sendMsg()">
+      <button class="btn btn-primary" onclick="sendMsg()">发送</button>
+      <button class="btn btn-danger btn-sm" onclick="clearChat()">清空</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Settings Page ──────────────── -->
+<div id="page-settings" class="page">
+  <div class="settings">
+    <h2>⚙️ 设置</h2>
+
+    <div class="card">
+      <h3>🤖 AI 接口配置</h3>
+      <div class="field">
+        <label>Base URL</label>
+        <input id="cfgBaseUrl" placeholder="https://api.openai.com/v1">
+      </div>
+      <div class="field">
+        <label>API Key</label>
+        <input id="cfgApiKey" type="password" placeholder="sk-...">
+      </div>
+      <div class="field">
+        <label>模型</label>
+        <input id="cfgModel" placeholder="gpt-4o-mini">
+      </div>
+      <button class="btn btn-primary" onclick="saveConfig()">💾 保存配置</button>
+      <span id="configStatus"></span>
+    </div>
+
+    <div class="card">
+      <h3>🔧 MCP 工具启用</h3>
+      <p style="font-size:12px;color:var(--text2);margin-bottom:10px;">勾选你想让AI调用的工具，未勾选的工具AI不会使用</p>
+      <div style="margin-bottom:10px;">
+        <button class="btn btn-sm btn-primary" onclick="toggleAllTools(true)">全选</button>
+        <button class="btn btn-sm" onclick="toggleAllTools(false)">全不选</button>
+        <span id="mcpStatus" class="status-err" style="margin-left:10px;"></span>
+      </div>
+      <div id="toolGrid" class="tool-grid"></div>
+      <div style="margin-top:12px;">
+        <button class="btn btn-primary" onclick="saveConfig()">💾 保存设置</button>
+        <button class="btn btn-sm" onclick="refreshMCP()" style="margin-left:8px;">🔄 刷新MCP连接</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────
+let config = { ai: { baseUrl: "", apiKey: "", model: "" }, mcp: { enabledTools: [] } };
+let allTools = [];
+let chatHistory = [];  // for display
+let apiMessages = [];  // for AI API
+
+// ── Init ─────────────────────────────────────────────────────────
+(async function init() {
+  const resp = await fetch("/api/config");
+  config = await resp.json();
+  document.getElementById("cfgBaseUrl").value = config.ai?.baseUrl || "";
+  document.getElementById("cfgApiKey").value = config.ai?.apiKey || "";
+  document.getElementById("cfgModel").value = config.ai?.model || "";
+
+  // Load MCP tools
+  try {
+    const r = await fetch("/api/mcp/tools");
+    const d = await r.json();
+    allTools = d.tools || [];
+  } catch { allTools = []; }
+  renderTools();
+})();
+
+// ── Navigation ───────────────────────────────────────────────────
+function showPage(name) {
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+  document.getElementById("page-" + name).classList.add("active");
+  document.querySelectorAll(".nav-btns button").forEach(b => b.classList.remove("active"));
+  document.querySelectorAll(".nav-btns button").forEach(b => {
+    if ((name === "chat" && b.textContent.includes("对话")) ||
+        (name === "settings" && b.textContent.includes("设置")))
+      b.classList.add("active");
+  });
+}
+
+// ── Settings ─────────────────────────────────────────────────────
+function renderTools() {
+  const grid = document.getElementById("toolGrid");
+  const enabled = new Set(config.mcp?.enabledTools || []);
+  grid.innerHTML = allTools.map(t => `
+    <div class="tool-item">
+      <input type="checkbox" id="t-${t}" ${enabled.has(t) ? "checked" : ""} onchange="updateTool('${t}', this.checked)">
+      <label class="tool-label" for="t-${t}" title="${t}">${t}</label>
+    </div>
+  `).join("");
+}
+
+function updateTool(name, checked) {
+  if (!config.mcp) config.mcp = { enabledTools: [] };
+  if (!config.mcp.enabledTools) config.mcp.enabledTools = [];
+  if (checked) {
+    if (!config.mcp.enabledTools.includes(name)) config.mcp.enabledTools.push(name);
+  } else {
+    config.mcp.enabledTools = config.mcp.enabledTools.filter(t => t !== name);
+  }
+}
+
+function toggleAllTools(on) {
+  if (on) config.mcp.enabledTools = [...allTools];
+  else config.mcp.enabledTools = [];
+  renderTools();
+}
+
+async function saveConfig() {
+  config.ai = {
+    baseUrl: document.getElementById("cfgBaseUrl").value,
+    apiKey: document.getElementById("cfgApiKey").value,
+    model: document.getElementById("cfgModel").value,
+  };
+  const r = await fetch("/api/config", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(config) });
+  const d = await r.json();
+  const el = document.getElementById("configStatus");
+  el.textContent = d.ok ? "✅ 已保存" : "❌ 保存失败";
+  el.className = d.ok ? "status-ok" : "status-err";
+  setTimeout(() => el.textContent = "", 3000);
+}
+
+async function refreshMCP() {
+  const el = document.getElementById("mcpStatus");
+  el.textContent = "连接中…";
+  try {
+    const r = await fetch("/api/mcp/discover", { method: "POST" });
+    const d = await r.json();
+    if (d.tools && d.tools.length > 0) {
+      allTools = d.tools.map(t => t.name);
+      renderTools();
+      el.textContent = `✅ 发现 ${allTools.length} 个工具`;
+      el.className = "status-ok";
+    } else {
+      el.textContent = "⚠️ MCP服务未连接或无工具";
+      el.className = "status-err";
+    }
+  } catch {
+    el.textContent = "❌ MCP服务不可达";
+    el.className = "status-err";
+  }
+}
+
+// ── Chat ─────────────────────────────────────────────────────────
+function addMsg(role, text) {
+  chatHistory.push({ role, text });
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.innerHTML = `<div class="bubble">${escHtml(text)}</div>`;
+  document.getElementById("messages").appendChild(div);
+  div.scrollIntoView({ behavior: "smooth" });
+}
+
+function addToolMsg(tool, args, result) {
+  const div = document.createElement("div");
+  div.className = "msg tool";
+  let summary = `🔧 调用 ${tool}`;
+  if (args && Object.keys(args).length) summary += `\n参数: ${JSON.stringify(args, null, 0)}`;
+  if (result) {
+    const s = JSON.stringify(result);
+    summary += `\n结果: ${s.length > 200 ? s.slice(0, 200) + "…" : s}`;
+  }
+  div.innerHTML = `<div class="bubble">${escHtml(summary)}</div>`;
+  document.getElementById("messages").appendChild(div);
+  div.scrollIntoView({ behavior: "smooth" });
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+async function sendMsg() {
+  const input = document.getElementById("userInput");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  addMsg("user", text);
+  apiMessages.push({ role: "user", content: text });
+
+  document.getElementById("typing").style.display = "block";
+
+  // Build tool definitions from enabled tools
+  let toolDefs = [];
+  const enabled = new Set(config.mcp?.enabledTools || []);
+  if (enabled.size > 0 && allTools.length > 0) {
+    // Fetch tool schemas from MCP
+    try {
+      const r = await fetch("/api/mcp/discover", { method: "POST" });
+      const d = await r.json();
+      toolDefs = (d.tools || []).filter(t => enabled.has(t.name));
+    } catch {}
+  }
+
+  try {
+    await streamChat(toolDefs);
+  } catch (e) {
+    addMsg("ai", "❌ AI请求失败: " + e.message);
+  }
+
+  document.getElementById("typing").style.display = "none";
+}
+
+async function streamChat(toolDefs) {
+  // Build the request
+  const body = {
+    messages: apiMessages,
+    tools: toolDefs.length > 0 ? toolDefs : undefined,
+    stream: true,
+  };
+
+  const resp = await fetch("/api/ai/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(err || resp.status);
+  }
+
+  // Read SSE stream
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullContent = "";
+  let toolCalls = []; // accumulate tool calls
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop(); // keep incomplete line
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (data === "[DONE]") continue;
+      try {
+        const parsed = JSON.parse(data);
+        const delta = parsed.choices?.[0]?.delta;
+        if (!delta) continue;
+
+        // Content
+        if (delta.content) {
+          fullContent += delta.content;
+        }
+
+        // Tool calls (streamed)
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index ?? 0;
+            if (!toolCalls[idx]) {
+              toolCalls[idx] = { id: tc.id || "", name: "", args: "" };
+            }
+            if (tc.id) toolCalls[idx].id = tc.id;
+            if (tc.function?.name) toolCalls[idx].name = tc.function.name;
+            if (tc.function?.arguments) toolCalls[idx].args += tc.function.arguments;
+          }
+        }
+      } catch {}
+    }
+  }
+
+  // If we got text content, show it
+  if (fullContent) {
+    addMsg("ai", fullContent);
+    apiMessages.push({ role: "assistant", content: fullContent });
+  }
+
+  // Process tool calls
+  if (toolCalls.length > 0) {
+    for (const tc of toolCalls) {
+      const args = tc.args ? JSON.parse(tc.args) : {};
+      addToolMsg(tc.name, args, null);
+
+      // Call MCP tool
+      let result;
+      try {
+        const r = await fetch("/api/mcp/call", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tool: tc.name, arguments: args }),
+        });
+        result = await r.json();
+      } catch (e) {
+        result = { error: e.message };
+      }
+
+      addToolMsg(tc.name + " ✅", {}, result);
+
+      // Feed result back to AI
+      apiMessages.push({
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: tc.id, type: "function", function: { name: tc.name, arguments: JSON.stringify(args) } }]
+      });
+      apiMessages.push({
+        role: "tool",
+        tool_call_id: tc.id,
+        content: JSON.stringify(result),
+      });
+    }
+
+    // Continue conversation after tool results
+    document.getElementById("typing").style.display = "block";
+    await streamChat(toolDefs);
+  }
+}
+
+function clearChat() {
+  chatHistory = [];
+  apiMessages = [];
+  document.getElementById("messages").innerHTML = "";
+}
+</script>
+</body>
+</html>
