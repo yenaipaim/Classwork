@@ -1,6 +1,6 @@
 <div align="center">
 
-**课程实践项目集 · 宠物医院 MCP 系统 / LLM 对接 / 文档上传**
+**课程实践项目集 · 宠物医院 MCP 系统 / LLM 对接 / 文档上传 / 命令行对话工具**
 
 </div>
 
@@ -13,7 +13,8 @@ Anything/
 ├── README.md               ← 本文件
 ├── Pet/                    ← 第一次课：宠物医院完整系统
 ├── LLM_MCP/                ← 第二次课：AnythingLLM MCP 桥接
-└── LLM_UPLOAD_MCP/         ← 第三次课：AnythingLLM 文档上传页
+├── LLM_UPLOAD_MCP/         ← 第三次课：AnythingLLM 文档上传页
+└── Agent/Practice01/       ← 第四次课：多轮对话命令行工具
 ```
 
 | 目录 | 课程 | 简介 | 启动方式 |
@@ -21,6 +22,7 @@ Anything/
 | `Pet/` | 第 1 次 | Go 宠物医院 + 28 个 MCP 工具 + AI 对话网页 | 双击 `Pet/启动.bat` |
 | `LLM_MCP/` | 第 2 次 | 将 AnythingLLM 知识库封装为 MCP 工具 | `python server.py` |
 | `LLM_UPLOAD_MCP/` | 第 3 次 | 文档上传 & 嵌入 AnythingLLM 的网页 | 浏览器直接打开 `index.html` |
+| `Agent/Practice01/` | 第 4 次 | 多轮对话 CLI（流式输出 · 终端转圈动画） | `python main.py` |
 
 ---
 
@@ -166,6 +168,66 @@ python LLM_MCP\server.py
 
 ---
 
+## Agent/Practice01 — 多轮对话 CLI（第 4 次课）
+
+> 单文件命令行对话工具：**纯终端界面 + 流式输出 + 多轮上下文**，
+> 兼容任意 OpenAI 格式接口。无 emoji，无第三方界面库。
+
+```powershell
+python Agent\Practice01\main.py
+```
+
+### 特性
+
+| 能力 | 说明 |
+|------|------|
+| 多轮上下文 | 保留在内存中，退出即清空；只发送最近 **10 轮**（`HISTORY_TURNS` 可调） |
+| 流式输出 | `stream=True` 逐段打印，首字到达即开始显示 |
+| 等待动画 | 首个 token 到达前原地转圈（`\` `丨` `/` `-` 四帧），到达后自动擦除，不残留空行 |
+| 配置向导 | 首次运行若无 `config.ini`，交互式询问 BaseURL / APIKey / ModelName 并写入 |
+| 退出方式 | 输入 `/exit`，或 Ctrl+C / Ctrl+D |
+| 错误处理 | 失败统一提示 `额度已经耗尽或者配置信息错误`；失败或中断的轮次**不写入上下文** |
+
+### 交互示例
+
+```
+等待用户输入：
+---------------
+（在这里输入问题）
+---------------
+生成中 \          ← 首个 token 到达前转圈，随后被回复原地覆盖
+（AI 回复，流式逐段出现）
+等待用户输入：
+---------------
+```
+
+### 配置说明
+
+| 文件 | 说明 |
+|------|------|
+| `Agent/Practice01/config.ini` | `[llm]` 段下的 `base_url` / `api_key` / `model_name`，首次运行自动生成 |
+
+> `config.ini` 内含 API Key，已在 `Agent/Practice01/.gitignore` 中排除，不会提交到仓库。
+
+### 可调参数（`main.py` 顶部常量）
+
+| 常量 | 默认值 | 说明 |
+|------|--------|------|
+| `SYSTEM_PROMPT` | `回答简洁，减少副词，不用 emoji。` | 系统提示词 |
+| `MAX_TOKENS` | `512` | 单次回答上限 |
+| `HISTORY_TURNS` | `10` | 保留的上下文轮数 |
+| `REQUEST_TIMEOUT` | `60.0` | 单次请求超时（秒） |
+| `EXIT_COMMAND` | `/exit` | 退出指令 |
+| `SPINNER_INTERVAL` | `0.12` | 转圈动画帧间隔（秒） |
+
+### 依赖
+
+```powershell
+pip install openai
+```
+
+---
+
 ## 通用要求
 
 | 依赖 | 版本 | 用途 |
@@ -177,8 +239,10 @@ python LLM_MCP\server.py
 Python 依赖：
 
 ```powershell
-pip install mcp httpx uvicorn
+pip install mcp httpx uvicorn openai
 ```
+
+> `openai` 仅 `Agent/Practice01` 需要；`mcp` / `httpx` / `uvicorn` 供 `Pet` 与 `LLM_MCP` 使用。
 
 ---
 
