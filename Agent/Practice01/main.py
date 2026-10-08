@@ -1,4 +1,4 @@
-"""单轮对话命令行工具：一次输入，一次回复，无历史记忆。"""
+"""命令行对话工具：多轮对话，上下文保留在内存中，退出即清空。"""
 
 import configparser
 import os
@@ -14,7 +14,11 @@ SYSTEM_PROMPT = "回答简洁，减少副词，不用 emoji。"
 MAX_TOKENS = 512
 ERROR_TEXT = "额度已经耗尽或者配置信息错误"
 
+# 保留的上下文轮数：每轮 = 一次提问 + 一次回答
+HISTORY_TURNS = 10
+
 LINE = "---------------"
+EXIT_COMMAND = "/exit"
 
 SPINNER_FRAMES = "\\|/-"
 SPINNER_INTERVAL = 0.12
@@ -63,20 +67,28 @@ def spinner(spin_stop, first_chunk):
     print("\r\x1b[K", end="", flush=True)
 
 
-def stream_answer(client, model_name, question, on_first_chunk):
-    """流式调用，逐段产出文本。
+class Outcome:
+    """一次流式调用的结果：区分「模型产出的内容」与「失败」。"""
 
-    若尚未输出任何内容就失败，产出统一错误文案；若中途断流，则保留已产出的
-    半截回答并追加提示，不把它伪装成完整回答。
+    def __init__(self):
+        self.parts = []
+        self.error = None
+
+    @property
+    def text(self):
+        return "".join(self.parts)
+
+
+def stream_answer(client, model_name, messages, on_first_chunk, outcome):
+    """流式调用，逐段产出文本，并把失败记在 outcome.error 上。
+
+    错误文案不再混进正文：调用方据此决定「失败提示照打、但不写入上下文」，
+    避免模型把自己没说过的话当成历史。
     """
-    got_any = False
     try:
         stream = client.chat.completions.create(
             model=model_name,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": question},
-            ],
+            messages=messages,
             max_tokens=MAX_TOKENS,
             stream=True,
         )
@@ -86,17 +98,76 @@ def stream_answer(client, model_name, question, on_first_chunk):
             piece = chunk.choices[0].delta.content
             if not piece:
                 continue
-            if not got_any:
-                got_any = True
+            if not outcome.parts:
                 on_first_chunk()
+            outcome.parts.append(piece)
             yield piece
     except KeyboardInterrupt:
         raise
     except Exception:
-        if got_any:
-            yield "\n[回复中断] " + ERROR_TEXT
+        outcome.error = ERROR_TEXT
+
+
+def read_question():
+    """读取一次输入。返回 (内容, 是否退出)；退出时内容为 None。"""
+    print("等待用户输入：")
+    try:
+        line = input()
+    except EOFError:
+        print()
+        print("未收到输入，已退出。")
+        return None, True
+    except KeyboardInterrupt:
+        print()
+        return None, True
+    # 输入回车后光标已在新行，这里补下分隔线
+    print(LINE)
+    if line.strip() == EXIT_COMMAND:
+        return None, True
+    return line, False
+
+
+def ask_once(client, model_name, messages):
+    """跑一轮请求并打印回复。
+
+    返回 (回答文本, 是否失败)：失败时回答为 None；中途断流则返回已打印的半截
+    内容并标记失败（不写入上下文，避免把残缺回答当成完整历史）。
+    """
+    spin_stop = threading.Event()
+    first_chunk = threading.Event()
+    spinner_thread = threading.Thread(target=spinner, args=(spin_stop, first_chunk))
+    outcome = Outcome()
+
+    printed = False
+    set_cursor(False)
+    spinner_thread.start()
+    try:
+        for piece in stream_answer(client, model_name, messages, first_chunk.set, outcome):
+            if not printed:
+                spinner_thread.join()  # 等动画擦干净，正文从行首开始
+                printed = True
+            print(piece, end="", flush=True)
+        if not printed:
+            spin_stop.set()  # 没有内容产出时也要停掉动画，否则线程不退出
+            spinner_thread.join()
+    except KeyboardInterrupt:
+        spin_stop.set()
+        spinner_thread.join()
+        print("\n已中断")
+        return None, True
+    finally:
+        set_cursor(True)
+
+    if outcome.error:
+        if outcome.text:
+            # 已经打印了半截，只能贴一句提示，不能假装回答完整
+            print("\n[回复中断] " + outcome.error)
         else:
-            yield ERROR_TEXT
+            print(outcome.error)
+        return (outcome.text or None), True
+
+    print()
+    return outcome.text, False
 
 
 def main():
@@ -109,48 +180,30 @@ def main():
         print(ERROR_TEXT)
         return 1
 
-    print("等待用户输入：")
-    print(LINE)
-    try:
-        question = input()
-    except EOFError:
-        print()
-        print("未收到输入，已退出。")
-        return 1
-    except KeyboardInterrupt:
-        print()
-        return 0
-    # 输入回车后光标已在新行，这里补下分隔线
-    print(LINE)
-
     client = OpenAI(base_url=base_url, api_key=api_key, timeout=REQUEST_TIMEOUT)
 
-    spin_stop = threading.Event()
-    first_chunk = threading.Event()
-    spinner_thread = threading.Thread(target=spinner, args=(spin_stop, first_chunk))
+    history = []  # 上下文只留存内存，退出即清空
 
-    printed = False
-    set_cursor(False)
-    spinner_thread.start()
-    try:
-        for piece in stream_answer(client, model_name, question, first_chunk.set):
-            if not printed:
-                spinner_thread.join()  # 等动画擦干净，正文从行首开始
-                printed = True
-            print(piece, end="", flush=True)
-        if not printed:
-            spin_stop.set()  # 没有内容产出时也要停掉动画，否则线程不退出
-            spinner_thread.join()
-    except KeyboardInterrupt:
-        spin_stop.set()
-        spinner_thread.join()
-        print("\n已中断")
-        return 0
-    finally:
-        set_cursor(True)
+    while True:
+        question, quit_now = read_question()
+        if quit_now:
+            return 0
 
-    print()
-    return 0
+        # 只把最近 HISTORY_TURNS 轮发给模型，并保证开头是 user 而不是孤立的 assistant
+        recent = history[-(HISTORY_TURNS * 2):]
+        while recent and recent[0]["role"] != "user":
+            recent.pop(0)
+
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages.extend(recent)
+        messages.append({"role": "user", "content": question})
+
+        answer, failed = ask_once(client, model_name, messages)
+        if failed:
+            # 失败或中断：本轮不入上下文，避免留下没有回复的提问或残缺回答
+            continue
+        history.append({"role": "user", "content": question})
+        history.append({"role": "assistant", "content": answer})
 
 
 if __name__ == "__main__":
