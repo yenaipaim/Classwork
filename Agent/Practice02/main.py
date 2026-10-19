@@ -271,9 +271,8 @@ def stream_answer(client, model_name, messages, on_first_chunk, outcome):
 
 def read_question():
     """读取一次输入。返回 (内容, 是否退出)；退出时内容为 None。"""
-    print("等待用户输入：")
     try:
-        line = input()
+        line = input("请输入>>>")
     except EOFError:
         print()
         print("未收到输入，已退出。")
