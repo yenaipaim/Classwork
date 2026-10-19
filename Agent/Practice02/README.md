@@ -23,6 +23,7 @@ python Agent\Practice02\main.py
 Practice02/
 ├── main.py            # CLI、对话循环、工具注册与分发
 ├── file_tools.py      # 10 个文件工具和路径校验
+├── architecture.mmd   # Mermaid 代码架构图
 ├── config.ini         # 本地模型配置
 └── chat_history/      # 每次运行的问答存档
 ```
@@ -81,6 +82,12 @@ model_name = your-model
 
 每次运行会在 `chat_history/` 下生成一个问答与工具调用存档。
 `config.ini` 和 `chat_history/` 都不应提交到公共仓库。
+
+## 架构图
+
+[architecture.mmd](architecture.mmd) 使用 Mermaid `flowchart TD` 描述配置初始化、
+终端对话循环、流式模型调用、工具分发、文件工具校验和历史记录流程。
+可将该文件直接粘贴到支持 Mermaid 的编辑器或在线预览工具中查看。
 
 ## 依赖
 

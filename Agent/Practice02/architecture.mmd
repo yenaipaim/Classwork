@@ -1,0 +1,74 @@
+flowchart TD
+    START(["启动 python main.py"]) --> CONFIG_EXISTS{"config.ini 是否存在?"}
+    CONFIG_EXISTS -- "否" --> CREATE_CONFIG["create_config()<br/>交互输入 BaseURL / APIKey / ModelName"]
+    CREATE_CONFIG --> CONFIG_FILE["config.ini<br/>本地模型配置"]
+    CONFIG_EXISTS -- "是" --> CONFIG_FILE
+    CONFIG_FILE --> LOAD_CONFIG["load_config()<br/>读取 [llm] 配置"]
+    LOAD_CONFIG --> CLIENT["OpenAI Client<br/>base_url + api_key + REQUEST_TIMEOUT"]
+
+    subgraph INPUT_LAYER["终端交互层"]
+        direction TB
+        LOOP["main() 主循环"]
+        LOOP --> READ["read_question()<br/>提示: 请输入>>>"]
+        READ -- "/exit、EOF、Ctrl+C" --> EXIT(["退出程序"])
+        READ -- "普通问题" --> CONTEXT["构造 messages<br/>system + 最近 HISTORY_TURNS 轮 + 当前问题"]
+    end
+
+    CLIENT --> LOOP
+    CLIENT --> HISTORY_START["new_history_file(model_name)"]
+    HISTORY_START --> HISTORY_FILE["chat_history/YYYYMMDD_HHMMSS.txt<br/>本次运行历史存档"]
+    CONTEXT --> ASK["ask_once(client, model_name, messages)"]
+
+    subgraph SINGLE_TURN["单轮对话与工具循环"]
+        direction TB
+        ASK --> SETUP["初始化 spinner、rounds、answers、tool_log"]
+        SETUP --> STREAM_START["发起流式请求"]
+        STREAM_START --> STREAM["stream_answer()<br/>chat.completions.create(stream=True)"]
+        STREAM --> OPENAI["OpenAI 兼容 Chat Completions API"]
+        OPENAI --> CHUNK["增量 text / tool_calls"]
+        CHUNK --> OUTCOME["Outcome<br/>累积正文与工具调用分片"]
+        OUTCOME --> HAS_TOOL{"存在工具调用?"}
+        HAS_TOOL -- "否" --> COMPLETE["形成本轮完整回答"]
+        HAS_TOOL -- "是" --> ROUND_LIMIT{"rounds < MAX_TOOL_ROUNDS?"}
+        ROUND_LIMIT -- "否" --> FAILED["标记失败<br/>工具调用超过上限"]
+        ROUND_LIMIT -- "是" --> WRITE_CALL["追加 assistant.tool_calls 到 messages"]
+        WRITE_CALL --> DISPATCH["run_tool(name, arguments)"]
+        DISPATCH --> TOOL_RESULT["执行工具并追加 role=tool 结果"]
+        TOOL_RESULT --> TOOL_LOG["记录工具名称、参数、结果和时间"]
+        TOOL_LOG --> STREAM_START
+    end
+
+    subgraph TOOL_LAYER["工具分发层"]
+        direction TB
+        DISPATCH --> GET_DATE["get_date()<br/>系统 date 命令 / Python 回退"]
+        DISPATCH --> LEAP["_check_leap_year()<br/>is_leap_year()"]
+        DISPATCH --> LIST_TOOLS["list_tools()<br/>读取全局 TOOLS 清单"]
+        DISPATCH --> FILE_DISPATCH["run_file_tool()<br/>file_tools.py"]
+
+        FILE_DISPATCH --> FILE_READ["目录读取<br/>list_directory_contents<br/>get_file_type<br/>read_text_file"]
+        FILE_DISPATCH --> FILE_WRITE["文件变更<br/>create_file<br/>edit_text_file<br/>create_directory<br/>rename_path<br/>delete_file<br/>delete_directory"]
+        FILE_DISPATCH --> FILE_GUARD["路径与内容校验<br/>限定 PROJECT_ROOT<br/>仅纯文本<br/>最大 2 MB"]
+    end
+
+    COMPLETE --> TURN_STATUS{"ask_once 是否失败?"}
+    FAILED --> TURN_STATUS
+    TURN_STATUS -- "是" --> DISCARD["本轮不写入内存上下文"]
+    TURN_STATUS -- "否" --> MEMORY["history 追加 user 与 assistant"]
+    MEMORY --> SAVE_TURN["save_turn()<br/>追加用户问题、工具记录和回复"]
+    SAVE_TURN -.-> HISTORY_FILE
+    DISCARD --> LOOP
+    SAVE_TURN --> LOOP
+
+    classDef entry fill:#e8f1ff,stroke:#2f6fbf,color:#17365d
+    classDef process fill:#f7f8fa,stroke:#6b7280,color:#1f2937
+    classDef external fill:#fff4e5,stroke:#d97706,color:#7c2d12
+    classDef storage fill:#eef7ee,stroke:#3f8f4f,color:#1f4d2b
+    classDef decision fill:#f3e8ff,stroke:#7e57c2,color:#3f2a63
+    classDef failure fill:#fdecec,stroke:#c0392b,color:#7b241c
+
+    class START,EXIT entry
+    class LOOP,READ,CONTEXT,ASK,SETUP,STREAM_START,STREAM,CHUNK,OUTCOME,WRITE_CALL,DISPATCH,TOOL_RESULT,TOOL_LOG,MEMORY,SAVE_TURN process
+    class OPENAI external
+    class CONFIG_FILE,HISTORY_FILE storage
+    class CONFIG_EXISTS,HAS_TOOL,ROUND_LIMIT,TURN_STATUS decision
+    class FAILED,DISCARD failure
