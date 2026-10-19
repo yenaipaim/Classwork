@@ -1,6 +1,6 @@
 <div align="center">
 
-**课程实践项目集 · 宠物医院 MCP 系统 / LLM 对接 / 文档上传 / 命令行对话工具**
+**课程实践项目集 · 宠物医院 MCP 系统 / LLM 对接 / 文档上传 / 命令行对话工具 / 本地文件操作工具**
 
 </div>
 
@@ -14,7 +14,8 @@ Anything/
 ├── Pet/                    ← 第一次课：宠物医院完整系统
 ├── LLM_MCP/                ← 第二次课：AnythingLLM MCP 桥接
 ├── LLM_UPLOAD_MCP/         ← 第三次课：AnythingLLM 文档上传页
-└── Agent/Practice01/       ← 第四次课：多轮对话命令行工具
+├── Agent/Practice01/       ← 第四次课：多轮对话命令行工具
+└── Agent/Practice02/       ← 第五次课：本地文件操作工具扩展
 ```
 
 | 目录 | 课程 | 简介 | 启动方式 |
@@ -23,6 +24,7 @@ Anything/
 | `LLM_MCP/` | 第 2 次 | 将 AnythingLLM 知识库封装为 MCP 工具 | `python server.py` |
 | `LLM_UPLOAD_MCP/` | 第 3 次 | 文档上传 & 嵌入 AnythingLLM 的网页 | 浏览器直接打开 `index.html` |
 | `Agent/Practice01/` | 第 4 次 | 多轮对话 CLI（流式输出 · 终端转圈动画） | `python main.py` |
+| `Agent/Practice02/` | 进阶 | 多轮对话 CLI + 12 个工具（含 9 个本地文件操作） | `python Agent\Practice02\main.py` |
 
 ---
 
@@ -183,11 +185,19 @@ python Agent\Practice01\main.py
 |------|------|
 | 多轮上下文 | 保留在内存中，退出即清空；只发送最近 **10 轮**（`HISTORY_TURNS` 可调） |
 | 流式输出 | `stream=True` 逐段打印，首字到达即开始显示 |
-| 等待动画 | 首个 token 到达前原地转圈（`\` `丨` `/` `-` 四帧），到达后自动擦除，不残留空行 |
+| 等待动画 | 每次请求（含工具调用后的续问）在首个 token 到达前原地转圈（`\` `丨` `/` `-` 四帧），超过 3 秒附加已等待秒数，到达后自动擦除，不残留空行；秒数只是显示进度，不影响请求本身 |
 | 配置向导 | 首次运行若无 `config.ini`，交互式询问 BaseURL / APIKey / ModelName 并写入 |
 | 退出方式 | 输入 `/exit`，或 Ctrl+C / Ctrl+D |
 | 错误处理 | 失败统一提示 `额度已经耗尽或者配置信息错误`；失败或中断的轮次**不写入上下文** |
-| 历史记录 | 每次运行在 `chat_history/` 下生成一个带时间戳的 `.txt`，逐轮追加成功的问答 |
+| 工具调用 | 模型可调用 `get_date` 与 `isLeapyear`；单轮内最多连续 5 次（`MAX_TOOL_ROUNDS`），执行结果同时打印并写入历史 |
+| 历史记录 | 每次运行在 `chat_history/` 下生成一个带时间戳的 `.txt`，逐轮追加成功的问答与工具调用 |
+
+### 可用工具
+
+| 工具 | 参数 | 说明 |
+|------|------|------|
+| `get_date` | 无 | 读取本机当前时间（执行系统 `date` 命令，无 `date` 时退回 Python 实现） |
+| `isLeapyear` | `year`（整数） | 判断年份是否为闰年，Python 规则计算：能被 4 整除，整百年需能被 400 整除 |
 
 ### 交互示例
 
@@ -213,17 +223,21 @@ python Agent\Practice01\main.py
 
 ### 历史记录
 
-每次启动会新建一个文件（`chat_history/年月日_时分秒.txt`），只追加**成功完成**的问答；失败、中断、半截断流的轮次不写入。格式：
+每次启动会新建一个文件（`chat_history/年月日_时分秒.txt`），只追加**成功完成**的问答（含本轮内的工具调用）；失败、中断、半截断流的轮次不写入。格式：
 
 ```text
 # 模型：mimo-v2.6-flash
 # 开始：2026-10-19 09:28:47
 
 [09:28:47] 用户
-第一问
+现在几点
+
+[工具] get_date  09:28:48
+参数：{}
+结果：2026-10-19 09:28:48 星期日（UTC+0800）
 
 [回复]
-第一答
+现在是 9 点 28 分。
 ```
 
 该文件仅作本地存档，**不会在启动时回读**——上下文仍只保留当次运行的内存内容。
@@ -248,6 +262,80 @@ pip install openai
 
 ---
 
+## Agent/Practice02 — 本地文件操作 CLI(第五次课)
+
+> 在 `Agent/Practice01` 的多轮对话、流式输出和工具调用基础上，
+> 增加一组受项目目录约束的本地文件操作工具。
+
+```powershell
+python Agent\Practice02\main.py
+```
+
+首次运行时，如果同目录下没有 `config.ini`，程序会交互式询问
+BaseURL、APIKey 和 ModelName 并保存配置。输入 `/exit` 退出。
+
+### 文件结构
+
+```text
+Agent/Practice02/
+├── main.py            # CLI 入口、对话循环、工具注册与执行分发
+├── file_tools.py      # 9 个本地文件工具、路径校验与文本格式处理
+├── config.ini         # 本地模型配置（含 API Key，不提交）
+└── chat_history/      # 每次运行的问答与工具调用存档（不提交）
+```
+
+`main.py` 在导入本地模块前关闭了字节码缓存写入，因此正常运行不会生成
+`__pycache__`。退出后，当前对话历史仍会按运行时间写入 `chat_history/`。
+
+### 与 Practice01 的区别
+
+| 能力 | Practice01 | Practice02 |
+|------|------------|------------|
+| 对话与流式输出 | 支持 | 支持 |
+| 日期与闰年工具 | 2 个 | 2 个 |
+| 本地文件工具 | 无 | 9 个 |
+| 工具清单 | 无 | `list_tools` |
+| 工具总数 | 2 个 | 12 个 |
+| 路径范围 | 不涉及文件操作 | 限定在 `Agent/Practice02` |
+
+### 工具清单
+
+| 工具 | 参数 | 说明 |
+|------|------|------|
+| `get_date` | 无 | 获取本机日期、时间、星期和 UTC 偏移 |
+| `isLeapyear` | `year`（整数） | 判断指定年份是否为闰年 |
+| `get_current_working_directory` | 无 | 返回当前进程工作目录和项目根目录 |
+| `list_directory_contents` | `directory` | 列出指定目录的直接子文件和子目录，不递归 |
+| `get_file_type` | `path` | 返回扩展名、MIME 类型、是否纯文本及文件大小 |
+| `read_text_file` | `path` | 读取纯文本文件，支持 UTF-8、UTF-16、GB18030 等编码 |
+| `create_file` | `directory`、`filename` | 在已有目录下创建空文件，不覆盖同名文件 |
+| `edit_text_file` | `path`、`content` | 用完整的新内容替换纯文本文件 |
+| `create_directory` | `directory` | 创建目录，缺少的父目录会一并创建 |
+| `delete_directory` | `directory` | 递归删除目录及其中全部内容 |
+| `delete_file` | `path` | 删除指定文件 |
+| `list_tools` | 无 | 列出当前注册的全部工具名称和描述 |
+
+### 路径与文件安全
+
+- 文件路径可以是相对路径或绝对路径，但最终必须位于 `Agent/Practice02` 内。
+- 路径越界、通过符号链接指向项目外时会被拒绝。
+- `delete_directory` 支持删除非空目录，但不能删除项目根目录。
+- 读取和编辑仅支持纯文本格式；二进制内容会被拒绝。
+- 单个文本文件读取上限为 **2 MB**。
+- `edit_text_file` 会完整替换文件内容，不会自动合并或追加。
+- `list_directory_contents` 只列出当前层级的直接内容，不递归遍历。
+
+### 配置与历史记录
+
+| 文件 | 说明 |
+|------|------|
+| `Agent/Practice02/config.ini` | `[llm]` 段下的 `base_url` / `api_key` / `model_name` |
+| `Agent/Practice02/chat_history/*.txt` | 每次运行生成的问答和工具调用存档 |
+
+配置、历史记录和 `__pycache__` 均属于本地运行产物，不应提交到仓库。
+
+---
+
 ## 通用要求
 
 | 依赖 | 版本 | 用途 |
@@ -262,7 +350,8 @@ Python 依赖：
 pip install mcp httpx uvicorn openai
 ```
 
-> `openai` 仅 `Agent/Practice01` 需要；`mcp` / `httpx` / `uvicorn` 供 `Pet` 与 `LLM_MCP` 使用。
+> `openai` 供 `Agent/Practice01` 与 `Agent/Practice02` 使用；
+> `mcp` / `httpx` / `uvicorn` 供 `Pet` 与 `LLM_MCP` 使用。
 
 ---
 
