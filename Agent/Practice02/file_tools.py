@@ -304,6 +304,32 @@ def delete_file(path):
     }
 
 
+def rename_path(path, new_name):
+    source = _resolve_project_path(path)
+    if not source.exists():
+        raise FileToolError("文件或目录不存在：%s" % _display_path(source))
+    if source == PROJECT_ROOT:
+        raise FileToolError("不能重命名项目根目录")
+    if not isinstance(new_name, str) or not new_name.strip():
+        raise FileToolError("new_name 必须是非空字符串")
+    if Path(new_name).name != new_name or new_name in (".", ".."):
+        raise FileToolError("new_name 只能是名称，不能包含目录路径")
+
+    target = _resolve_project_path(str(source.parent / new_name), "new_name")
+    if target.exists():
+        raise FileToolError("目标路径已存在：%s" % _display_path(target))
+
+    entry_type = "directory" if source.is_dir() else "file"
+    source.rename(target)
+    return {
+        "ok": True,
+        "old_path": _display_path(source),
+        "new_path": _display_path(target),
+        "type": entry_type,
+        "message": "重命名成功",
+    }
+
+
 FILE_TOOLS = [
     {
         "type": "function",
@@ -430,6 +456,21 @@ FILE_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "rename_path",
+            "description": "重命名项目内的文件或目录，新名称必须与原路径位于同一目录",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "要重命名的项目内文件或目录路径"},
+                    "new_name": {"type": "string", "description": "新名称，不能包含目录路径"},
+                },
+                "required": ["path", "new_name"],
+            },
+        },
+    },
 ]
 
 
@@ -443,6 +484,7 @@ FILE_TOOL_HANDLERS = {
     "create_directory": create_directory,
     "delete_directory": delete_directory,
     "delete_file": delete_file,
+    "rename_path": rename_path,
 }
 
 FILE_TOOL_NAMES = frozenset(FILE_TOOL_HANDLERS)

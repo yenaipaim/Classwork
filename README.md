@@ -20,11 +20,11 @@ Anything/
 
 | 目录 | 课程 | 简介 | 启动方式 |
 |:----:|:----:|------|----------|
-| `Pet/` | 第 1 次 | Go 宠物医院 + 28 个 MCP 工具 + AI 对话网页 | 双击 `Pet/启动.bat` |
-| `LLM_MCP/` | 第 2 次 | 将 AnythingLLM 知识库封装为 MCP 工具 | `python server.py` |
-| `LLM_UPLOAD_MCP/` | 第 3 次 | 文档上传 & 嵌入 AnythingLLM 的网页 | 浏览器直接打开 `index.html` |
-| `Agent/Practice01/` | 第 4 次 | 多轮对话 CLI（流式输出 · 终端转圈动画） | `python main.py` |
-| `Agent/Practice02/` | 进阶 | 多轮对话 CLI + 12 个工具（含 9 个本地文件操作） | `python Agent\Practice02\main.py` |
+| [Pet/](Pet/README.md) | 第 1 次 | Go 宠物医院 + 28 个 MCP 工具 + AI 对话网页 | 双击 `Pet/启动.bat` |
+| [LLM_MCP/](LLM_MCP/README.md) | 第 2 次 | 将 AnythingLLM 知识库封装为 MCP 工具 | `python server.py` |
+| [LLM_UPLOAD_MCP/](LLM_UPLOAD_MCP/README.md) | 第 3 次 | 文档上传 & 嵌入 AnythingLLM 的网页 | 浏览器直接打开 `index.html` |
+| [Agent/Practice01/](Agent/Practice01/README.md) | 第 4 次 | 多轮对话 CLI（流式输出 · 终端转圈动画） | `python main.py` |
+| [Agent/Practice02/](Agent/Practice02/README.md) | 进阶 | 多轮对话 CLI + 13 个工具（含 10 个本地文件操作） | `python Agent\Practice02\main.py` |
 
 ---
 
@@ -279,7 +279,7 @@ BaseURL、APIKey 和 ModelName 并保存配置。输入 `/exit` 退出。
 ```text
 Agent/Practice02/
 ├── main.py            # CLI 入口、对话循环、工具注册与执行分发
-├── file_tools.py      # 9 个本地文件工具、路径校验与文本格式处理
+├── file_tools.py      # 10 个本地文件工具、路径校验与文本格式处理
 ├── config.ini         # 本地模型配置（含 API Key，不提交）
 └── chat_history/      # 每次运行的问答与工具调用存档（不提交）
 ```
@@ -293,9 +293,9 @@ Agent/Practice02/
 |------|------------|------------|
 | 对话与流式输出 | 支持 | 支持 |
 | 日期与闰年工具 | 2 个 | 2 个 |
-| 本地文件工具 | 无 | 9 个 |
+| 本地文件工具 | 无 | 10 个 |
 | 工具清单 | 无 | `list_tools` |
-| 工具总数 | 2 个 | 12 个 |
+| 工具总数 | 2 个 | 13 个 |
 | 路径范围 | 不涉及文件操作 | 限定在 `Agent/Practice02` |
 
 ### 工具清单
@@ -313,6 +313,7 @@ Agent/Practice02/
 | `create_directory` | `directory` | 创建目录，缺少的父目录会一并创建 |
 | `delete_directory` | `directory` | 递归删除目录及其中全部内容 |
 | `delete_file` | `path` | 删除指定文件 |
+| `rename_path` | `path`、`new_name` | 在同一目录内重命名文件或目录 |
 | `list_tools` | 无 | 列出当前注册的全部工具名称和描述 |
 
 ### 路径与文件安全
@@ -320,6 +321,7 @@ Agent/Practice02/
 - 文件路径可以是相对路径或绝对路径，但最终必须位于 `Agent/Practice02` 内。
 - 路径越界、通过符号链接指向项目外时会被拒绝。
 - `delete_directory` 支持删除非空目录，但不能删除项目根目录。
+- `rename_path` 只能在同一目录内改名，不能覆盖已有文件或目录。
 - 读取和编辑仅支持纯文本格式；二进制内容会被拒绝。
 - 单个文本文件读取上限为 **2 MB**。
 - `edit_text_file` 会完整替换文件内容，不会自动合并或追加。
