@@ -187,6 +187,7 @@ python Agent\Practice01\main.py
 | 配置向导 | 首次运行若无 `config.ini`，交互式询问 BaseURL / APIKey / ModelName 并写入 |
 | 退出方式 | 输入 `/exit`，或 Ctrl+C / Ctrl+D |
 | 错误处理 | 失败统一提示 `额度已经耗尽或者配置信息错误`；失败或中断的轮次**不写入上下文** |
+| 历史记录 | 每次运行在 `chat_history/` 下生成一个带时间戳的 `.txt`，逐轮追加成功的问答 |
 
 ### 交互示例
 
@@ -206,8 +207,26 @@ python Agent\Practice01\main.py
 | 文件 | 说明 |
 |------|------|
 | `Agent/Practice01/config.ini` | `[llm]` 段下的 `base_url` / `api_key` / `model_name`，首次运行自动生成 |
+| `Agent/Practice01/chat_history/*.txt` | 每次运行的对话存档，文件名形如 `20261019_092847.txt` |
 
-> `config.ini` 内含 API Key，已在 `Agent/Practice01/.gitignore` 中排除，不会提交到仓库。
+> `config.ini` 内含 API Key、`chat_history/` 含对话内容，均已在**根目录 `.gitignore`** 中排除，不会提交到仓库。
+
+### 历史记录
+
+每次启动会新建一个文件（`chat_history/年月日_时分秒.txt`），只追加**成功完成**的问答；失败、中断、半截断流的轮次不写入。格式：
+
+```text
+# 模型：mimo-v2.6-flash
+# 开始：2026-10-19 09:28:47
+
+[09:28:47] 用户
+第一问
+
+[回复]
+第一答
+```
+
+该文件仅作本地存档，**不会在启动时回读**——上下文仍只保留当次运行的内存内容。
 
 ### 可调参数（`main.py` 顶部常量）
 
@@ -219,6 +238,7 @@ python Agent\Practice01\main.py
 | `REQUEST_TIMEOUT` | `60.0` | 单次请求超时（秒） |
 | `EXIT_COMMAND` | `/exit` | 退出指令 |
 | `SPINNER_INTERVAL` | `0.12` | 转圈动画帧间隔（秒） |
+| `HISTORY_DIR` | `chat_history` | 历史记录目录（与 `main.py` 同目录） |
 
 ### 依赖
 
