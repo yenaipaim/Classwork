@@ -1,0 +1,41 @@
+flowchart TD
+    subgraph TUI["tui/ 终端界面层"]
+        APP["YenaiApp<br/>输入 / 展示 / 命令"]
+        CHAT["ChatLog<br/>消息流"]
+        CONFIG["ConfigScreen<br/>配置弹窗"]
+        I18N["i18n.py<br/>中文文案"]
+    end
+
+    subgraph CORE["core/ 核心层（不依赖界面技术）"]
+        FACTORY["factory.create_session<br/>唯一装配点"]
+        SESSION["AgentSession<br/>流式 + 工具循环 + 存档提交"]
+        CONTEXT["context.build_messages<br/>上下文裁剪"]
+        EVENTS["events<br/>TurnStarted / TextDelta / ToolCall* / Turn*"]
+        REGISTRY["ToolRegistry<br/>ToolSpec + 执行与错误归一"]
+        FILES["FileToolbox<br/>10 个文件工具（沙箱根注入）"]
+        BACKEND["LlmBackend / OpenAIBackend"]
+        TRANSCRIPT["Transcript<br/>chat_history/*.txt"]
+        CONFIGSTORE["ConfigStore<br/>config.ini"]
+    end
+
+    APP -->|"创建会话"| FACTORY
+    APP -->|"消费事件"| SESSION
+    APP --> CHAT
+    APP --> CONFIG
+    APP --> I18N
+    CONFIG --> CONFIGSTORE
+    FACTORY --> SESSION
+    FACTORY --> BACKEND
+    FACTORY --> REGISTRY
+    FACTORY --> TRANSCRIPT
+    SESSION --> CONTEXT
+    SESSION --> EVENTS
+    SESSION --> REGISTRY
+    SESSION --> BACKEND
+    SESSION --> TRANSCRIPT
+    REGISTRY --> FILES
+
+    classDef ui fill:#e8f0fe,stroke:#4a6fa5;
+    classDef core fill:#f3f7ec,stroke:#5b7f3a;
+    class APP,CHAT,CONFIG,I18N ui;
+    class FACTORY,SESSION,CONTEXT,EVENTS,REGISTRY,FILES,BACKEND,TRANSCRIPT,CONFIGSTORE core;

@@ -76,5 +76,6 @@ ModelName：
 pip install openai
 ```
 
-下一步的文件工具扩展见 [../Practice02/README.md](../Practice02/README.md)。
+下一步的文件工具扩展见 [../Practice02/README.md](../Practice02/README.md)；
+分层重构（core + Textual TUI）版本见 [../YenaiAgent/README.md](../YenaiAgent/README.md)。
 

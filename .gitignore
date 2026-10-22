@@ -3,3 +3,9 @@ config.ini
 
 # 对话历史记录（本地存档，不上传）
 chat_history/
+
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/

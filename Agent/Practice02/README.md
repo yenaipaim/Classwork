@@ -3,6 +3,9 @@
 在 [Practice01](../Practice01/README.md) 的多轮对话、流式输出和工具调用基础上，
 增加 10 个受项目目录约束的本地文件工具，并提供一个工具清单功能。
 
+> 本目录保留为课程原始版本。重构版见 [../YenaiAgent/README.md](../YenaiAgent/README.md)：
+> 同样的 13 个工具与存档格式，但拆成 `core` / `tui` 两层并改为 Textual 全屏界面。
+
 ## 启动
 
 ```powershell

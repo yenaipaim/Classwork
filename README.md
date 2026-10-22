@@ -1,6 +1,6 @@
 <div align="center">
 
-**课程实践项目集 · 宠物医院 MCP 系统 / LLM 对接 / 文档上传 / 命令行对话工具 / 本地文件操作工具**
+**课程实践项目集 · 宠物医院 MCP 系统 / LLM 对接 / 文档上传 / 命令行对话工具 / 本地文件工具 / Textual 终端智能体**
 
 </div>
 
@@ -15,7 +15,8 @@ Anything/
 ├── LLM_MCP/                ← 第二次课：AnythingLLM MCP 桥接
 ├── LLM_UPLOAD_MCP/         ← 第三次课：AnythingLLM 文档上传页
 ├── Agent/Practice01/       ← 第四次课：多轮对话命令行工具
-└── Agent/Practice02/       ← 第五次课：本地文件操作工具扩展
+├── Agent/Practice02/       ← 第五次课：本地文件操作工具扩展
+└── Agent/YenaiAgent/       ← 第六次课：core/TUI 分层重构（Textual 界面）
 ```
 
 | 目录 | 课程 | 简介 | 启动方式 |
@@ -24,7 +25,8 @@ Anything/
 | [LLM_MCP/](LLM_MCP/README.md) | 第 2 次 | 将 AnythingLLM 知识库封装为 MCP 工具 | `python server.py` |
 | [LLM_UPLOAD_MCP/](LLM_UPLOAD_MCP/README.md) | 第 3 次 | 文档上传 & 嵌入 AnythingLLM 的网页 | 浏览器直接打开 `index.html` |
 | [Agent/Practice01/](Agent/Practice01/README.md) | 第 4 次 | 多轮对话 CLI（流式输出 · 终端转圈动画） | `python main.py` |
-| [Agent/Practice02/](Agent/Practice02/README.md) | 进阶 | 多轮对话 CLI + 13 个工具（含 10 个本地文件操作） | `python Agent\Practice02\main.py` |
+| [Agent/Practice02/](Agent/Practice02/README.md) | 第 5 次 | 多轮对话 CLI + 13 个工具（含 10 个本地文件操作） | `python Agent\Practice02\main.py` |
+| [Agent/YenaiAgent/](Agent/YenaiAgent/README.md) | 第 6 次 | 把 Practice02 拆成 core + tui：Textual 终端界面、消息卡片、配置页 | `python Agent\YenaiAgent\main.py` |
 
 ---
 
@@ -264,6 +266,8 @@ pip install openai
 
 > 在 `Agent/Practice01` 的多轮对话、流式输出和工具调用基础上，
 > 增加一组受项目目录约束的本地文件操作工具。
+>
+> 该目录保留为课程原始版本；分层重写版见 [Agent/YenaiAgent](Agent/YenaiAgent/README.md)。
 
 ```powershell
 python Agent\Practice02\main.py
@@ -336,6 +340,50 @@ Agent/Practice02/
 
 ---
 
+## Agent/YenaiAgent — 分层重构 TUI 版（第六次课）
+
+> 把 Practice02 重构为 **core + tui** 两层：对话、工具、会话、存档全部收进 `core/`，
+> 终端界面换成 **Textual**，后续 Web / Desktop 可直接复用同一套 core。
+> 工具能力与 Practice02 等价：13 个工具（2 个日期/闰年 + 10 个文件工具 + 工具清单）。
+
+```powershell
+python Agent\YenaiAgent\main.py
+```
+
+首次运行若无 `config.ini`，会弹出中文配置页（Base URL / API Key / 模型名）；
+也可以直接编辑 `config.ini` 的 `[llm]` 段。
+
+### 分层约定
+
+| 层 | 目录 | 职责 |
+|----|------|------|
+| core | `core/` | 配置、事件、上下文裁剪、LLM 后端、工具注册表、文件沙箱、会话、存档 |
+| tui | `tui/` | Textual App、消息卡片、配置页、中文文案、样式 |
+| 入口 | `main.py` | 只调用 `tui.__main__.main()`，可传 `--config` / `--history-dir` / `--workspace` |
+
+依赖方向是单向的：`tui → core`；`core` 不导入 `textual` / `rich` / `tui`，也不使用
+`print` / `input` / `sys.exit`，因此可以脱离终端被其他前端调用。
+
+### 界面与操作
+
+- 消息卡片：用户橙色左边条、助手蓝色左边条，正文与角色标签分行
+- 工具调用卡片：`工具名(参数)`、✓/✗ 状态、耗时 ms、「参数」「结果」分节
+- 状态栏：就绪 / 思考中 / 工具运行 / 取消
+- 快捷键：`Ctrl+Q` 退出，`Ctrl+C` 中断当前回复（空闲时退出），`Ctrl+L` 清屏
+- 命令：`/help` `/clear` `/reset` `/config` `/model` `/exit`
+
+### 测试
+
+```powershell
+cd Agent\YenaiAgent
+python -m pytest tests -q
+```
+
+覆盖配置读写、上下文裁剪、工具注册表、文件沙箱越界、会话事件流、存档格式、
+分层约束（core 不得依赖 UI）以及 TUI 无头测试。
+
+---
+
 ## 通用要求
 
 | 依赖 | 版本 | 用途 |
@@ -347,10 +395,11 @@ Agent/Practice02/
 Python 依赖：
 
 ```powershell
-pip install mcp httpx uvicorn openai
+pip install mcp httpx uvicorn openai textual
 ```
 
-> `openai` 供 `Agent/Practice01` 与 `Agent/Practice02` 使用；
+> `openai` 供 `Agent/Practice01`、`Agent/Practice02` 与 `Agent/YenaiAgent` 使用；
+> `textual` 仅 `Agent/YenaiAgent` 需要；
 > `mcp` / `httpx` / `uvicorn` 供 `Pet` 与 `LLM_MCP` 使用。
 
 ---

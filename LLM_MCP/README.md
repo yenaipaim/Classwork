@@ -27,6 +27,7 @@ pip install mcp httpx
 python server.py
 ```
 
+依赖 `mcp` 2.x（`from mcp.server import MCPServer`）与 Python 3.10+。
 服务使用 MCP Streamable HTTP 传输。默认 MCP 地址由 `mcp.run("streamable-http")`
 决定，通常为 <http://127.0.0.1:8000/mcp>，请以启动日志为准。
 
@@ -41,6 +42,9 @@ WORKSPACE_SLUG = "mods"
 ```
 
 运行前请将 API Key 替换为自己的 AnythingLLM 密钥。不要提交真实密钥。
+
+> 仓库内的 `server.py` 自带一个课程演示用的 Key（已随代码提交），仅用于本地实验；
+> 请勿在真实环境复用，也建议改用环境变量读取。
 
 ## 直接请求 AnythingLLM
 

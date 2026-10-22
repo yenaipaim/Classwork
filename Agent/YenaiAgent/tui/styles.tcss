@@ -1,0 +1,176 @@
+Screen {
+    background: $surface;
+}
+
+#chat {
+    height: 1fr;
+    padding: 1 2 0 2;
+    scrollbar-size-vertical: 1;
+}
+
+.message {
+    height: auto;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.message.user {
+    border-left: thick $warning;
+    background: $surface-lighten-1;
+}
+
+.message.assistant {
+    border-left: thick $primary;
+    background: $surface-lighten-1;
+}
+
+.message .role {
+    height: 1;
+    color: $text-muted;
+    text-style: bold;
+}
+
+.message.user .role {
+    color: $warning;
+}
+
+.message.assistant .role {
+    color: $primary;
+}
+
+.message Markdown {
+    height: auto;
+}
+
+.message Static {
+    height: auto;
+}
+
+.tool {
+    height: auto;
+    border-left: thick $success;
+    background: $surface-lighten-1;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.tool.failed {
+    border-left: thick $error;
+}
+
+.tool-header {
+    height: 1;
+}
+
+.tool-arrow {
+    width: 1;
+    color: $text-muted;
+}
+
+.tool-icon {
+    width: 2;
+    color: $success;
+}
+
+.tool.failed .tool-icon {
+    color: $error;
+}
+
+.tool-title {
+    width: 1fr;
+    color: $text;
+}
+
+.tool-time {
+    width: auto;
+    color: $text-muted;
+}
+
+.tool-body {
+    height: auto;
+}
+
+.tool-section {
+    height: 1;
+    color: $text-muted;
+    text-style: bold;
+}
+
+.tool-args,
+.tool-result {
+    height: auto;
+    color: $text;
+    padding-left: 1;
+}
+
+.tool.failed .tool-result {
+    color: $error;
+}
+
+.system {
+    color: $text-muted;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.system.error {
+    color: $error;
+}
+
+.system.warn {
+    color: $warning;
+}
+
+#status {
+    height: 1;
+    background: $panel;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+#prompt {
+    margin: 0 1;
+}
+
+ConfigScreen {
+    align: center middle;
+}
+
+.dialog {
+    width: 70;
+    height: auto;
+    border: thick $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+.dialog .title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.dialog .label {
+    margin: 1 0 0 0;
+    color: $text-muted;
+}
+
+.dialog .hint {
+    color: $text-muted;
+    margin: 0 0 1 0;
+}
+
+.dialog #form-error {
+    color: $error;
+    height: auto;
+    margin-top: 1;
+}
+
+.dialog .buttons {
+    height: auto;
+    align-horizontal: right;
+    margin-top: 1;
+}
+
+.dialog Button {
+    margin-left: 1;
+}

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yenai-agent"
+version = "0.1.0"
+description = "YenaiAgent：core / TUI 分层的本地工具调用 Agent"
+requires-python = ">=3.10"
+dependencies = ["openai>=1.0,<4"]
+
+[project.optional-dependencies]
+tui = ["textual>=8.2,<9"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+yenai = "tui.__main__:main"
+
+[tool.setuptools]
+packages = ["core", "core.llm", "core.tools", "tui", "tui.widgets", "tui.screens"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

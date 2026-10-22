@@ -8,6 +8,10 @@
 > **一句话记住**：复制「可执行文件 + `data/pet.db`」到另一台电脑，双击即可继续使用，
 > 无需安装 Go、数据库或任何运行时依赖。
 
+> **仓库说明**：本仓库只包含已编译的 `pethospital.exe` 和 `data/pet.db`；
+> Go 源码、`Makefile`、`build.sh`、发行 ZIP 都不在这里。下文「从源码编译」「构建与发布」
+> 两节是上游 Go 项目的说明，便于理解构建方式，但无法在本仓库直接执行。
+
 ## 特性
 
 - **网页操作界面**：浏览器访问 `http://127.0.0.1:8080/` 即可增删改查，无需写代码
@@ -28,28 +32,31 @@
 
 ## 快速开始
 
-### 方式一：直接使用已编译好的发行包（推荐）
+### 方式一：直接使用已编译好的程序（推荐）
 
-请从本仓库的 [GitHub Releases](../../releases) 下载与你的系统匹配的发行 ZIP。解压后结构如下：
+本仓库的 `Pet/windows/` 就是 Windows amd64 发行包内容，无需另外下载：
 
 ```text
-pet-hospital-windows-amd64/
+windows/
 ├── pethospital.exe     ← 可执行文件（已内嵌网页）
-├── README.md           ← 本说明
+├── LICENSE             ← MIT 许可证
+├── README.md           ← 完整接口文档
+├── README-Windows.md   ← Windows 运行说明
 └── data/
     └── pet.db          ← 测试数据库（含模拟数据，可直接打开体验）
 ```
 
 ```bash
-cd pet-hospital-windows-amd64
+cd Pet\windows
 pethospital.exe                       # Windows（双击或命令行）
 ```
 
 然后浏览器打开 <http://127.0.0.1:8080/> 即可看到界面。
 
-> Windows 程序会在终端打印访问地址，**不会自动打开浏览器**。其他平台请下载对应发行包，或用「方式二」自行编译。
+> Windows 程序会在终端打印访问地址，**不会自动打开浏览器**。本仓库只包含 Windows
+> amd64 构建；其他平台需获取上游 Go 源码后自行编译（见「方式二」）。
 
-### 方式二：从源码编译
+### 方式二：从源码编译（需上游源码，本仓库未包含）
 
 ```bash
 # 编译到 dist 目录（推荐，与发行包结构一致）
@@ -64,6 +71,8 @@ go run . -no-color                        # 关闭彩色输出
 ```
 
 ### 交叉编译到其他平台
+
+以下命令需要 Go 源码（不在本仓库），并且需要先创建 `dist/` 目录：
 
 ```bash
 GOOS=windows GOARCH=amd64 go build -o dist/pethospital.exe .   # Windows 64 位
@@ -289,6 +298,8 @@ curl -s -X DELETE http://127.0.0.1:8080/api/v1/pets/PET-000001
 
 ## 项目结构
 
+上游 Go 项目结构（源码不在本仓库，`Pet/windows/` 只有编译产物与数据）：
+
 ```text
 .
 ├── main.go                  启动横幅、服务网址、优雅退出
@@ -307,6 +318,8 @@ curl -s -X DELETE http://127.0.0.1:8080/api/v1/pets/PET-000001
 ```
 
 ## 构建与发布
+
+以下命令需要上游 Go 源码、`Makefile` 与 `make`（本仓库未包含源码）：
 
 ```bash
 make help          # 查看全部命令

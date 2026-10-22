@@ -47,7 +47,9 @@ Pet/
 ├── windows/
 │   ├── pethospital.exe
 │   ├── data/pet.db
-│   └── README.md
+│   ├── LICENSE
+│   ├── README.md
+│   └── README-Windows.md
 ├── pet_hospital_mcp/
 │   ├── src/pet_hospital_mcp/
 │   └── README.md
@@ -62,6 +64,10 @@ Pet/
 更详细的 Go API 说明见 [windows/README.md](windows/README.md)，
 MCP 服务说明见 [pet_hospital_mcp/README.md](pet_hospital_mcp/README.md)，
 Web 服务说明见 [web/README.md](web/README.md)。
+
+> 本仓库只附带已编译的 **Windows 可执行文件**与数据库；Go 源码、`Makefile`、
+> `build.sh`、发行 ZIP 都不在本仓库。`windows/README.md` 中「从源码编译 / 构建发布」
+> 两节只作上游 Go 项目参考。
 
 ## 配置
 

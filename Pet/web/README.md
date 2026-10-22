@@ -23,6 +23,9 @@ web/
 └── frontend/index.html # 单页前端
 ```
 
+前端为单文件 `frontend/index.html`（原生 HTML/CSS/JS，无构建步骤），通过上表的
+HTTP 接口与后端交互，包含「设置」与「对话」两个页面。
+
 ## 环境变量
 
 | 变量 | 默认值 | 说明 |
@@ -46,4 +49,10 @@ web/
 - `config.json` 保存 AI Base URL、API Key、模型和已启用工具。
 - API Key 以明文保存在本地文件中，不应提交或分享。
 - 服务没有鉴权，只适合在本机或可信内网使用。
+
+## 相关文档
+
+- 系统总览：[../README.md](../README.md)
+- Go API 接口：[../windows/README.md](../windows/README.md)
+- MCP 服务：[../pet_hospital_mcp/README.md](../pet_hospital_mcp/README.md)
 
