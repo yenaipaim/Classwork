@@ -40,8 +40,9 @@ python Agent\YenaiAgent\main.py
 | 界面 | 终端逐行打印 + 转圈动画 | Textual 全屏 TUI：消息卡片、工具卡片、配置页 |
 | 依赖方向 | — | 严格 `tui → core`，core 不依赖任何 UI 库 |
 | 装配方式 | 模块级全局 | `core/factory.py` 注入 backend / registry / 沙箱根 |
-| 测试 | 手工验证 | `tests/` 覆盖 core 与 TUI（pytest，无头模式） |
-| 工具 | 13 个 | 13 个，行为与文案保持一致 |
+| 测试 | 手工验证 | `tests/` 覆盖 core 与 TUI（pytest，无头模式，108 个用例） |
+| 工具 | 13 个 | 16 个：在旧版基础上增加 `searchWeb`（联网搜索）、`fetchWeb`（抓网页正文）、`RunCli`（本地命令行） |
+| 输入 | `input()` 单行 | 多行输入框：`Enter` 发送、`Ctrl+J` 换行，卡片式消息流 |
 
 ## 配置
 
@@ -60,7 +61,8 @@ Practice01 / Practice02 在配置缺失时用终端问答创建；YenaiAgent 会
 ## 依赖
 
 ```powershell
-pip install openai textual
+pip install openai textual trafilatura
 ```
 
-`textual` 只有 YenaiAgent 需要。
+`textual` 与 `trafilatura` 只有 YenaiAgent 需要（后者用于 `fetchWeb` 提取网页正文）；
+YenaiAgent 目录下也有 `requirements.txt` 可以一次装齐。

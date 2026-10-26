@@ -16,8 +16,8 @@ ASSISTANT_LABEL = "AI"
 TOOL_ARGS_LABEL = "参数"
 TOOL_RESULT_LABEL = "结果"
 
-WELCOME = "输入问题开始对话；/help 查看命令。"
-INPUT_PLACEHOLDER = "输入问题，Enter 发送，Ctrl+C 中断"
+WELCOME = "输入问题开始对话（Enter 发送，Ctrl+J 换行）；/help 查看命令。"
+INPUT_PLACEHOLDER = "输入问题：Enter 发送，Ctrl+J 换行（可粘贴多行文本）"
 READY = "就绪"
 THINKING = "思考中…"
 CANCELLING = "正在中断…"
@@ -39,7 +39,7 @@ HELP_TEXT = """可用命令：
   /model   查看当前模型；/model 名称 切换模型（保留上下文）
   /config  修改模型配置（会开始新会话）
   /exit    退出程序
-快捷键：Enter 发送、Ctrl+C 中断/退出、Ctrl+Q 退出、Ctrl+L 清屏"""
+快捷键：Enter 发送、Ctrl+J 换行（部分终端也可用 Shift+Enter / Ctrl+Enter 换行）、Ctrl+C 中断/退出、Ctrl+Q 退出、Ctrl+L 清屏"""
 
 # 与旧版终端程序保持一致的失败文案
 _ERROR_TEMPLATES = {

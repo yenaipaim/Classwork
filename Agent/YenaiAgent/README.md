@@ -24,7 +24,7 @@ YenaiAgent/
 │   ├── app.py            # YenaiApp：线程模型、流式刷新、斜杠命令
 │   ├── i18n.py           # 全部中文文案与错误码 -> 文案映射
 │   ├── screens/          # 配置弹窗（全中文）
-│   ├── widgets/          # 消息卡片、可折叠的工具调用卡片
+│   ├── widgets/          # 消息卡片、可折叠的工具调用卡片、多行输入框
 │   ├── styles.tcss       # 界面样式（角色色条、工具卡片配色）
 │   └── __main__.py       # python -m tui
 ├── tests/                # 无网络测试：FakeBackend + Textual run_test
@@ -72,11 +72,24 @@ python main.py            # 或者：python -m tui
 base_url = https://api.example.com/v1
 api_key = your-key
 model_name = your-model
+
+# 可选：联网搜索工具 searchWeb 使用百度千帆「智能搜索生成」接口
+[search]
+baidu_qianfan_api_key = your-baidu-key
 ```
+
+不填 `[search]` 也能正常对话，只是模型调用 `searchWeb` 时会收到
+「未配置搜索服务」的提示。搜索默认返回 5 条结果，单条摘要截断到 400 字。
+网页抓取工具 `fetchWeb` 不需要额外配置，依赖系统自带的 `curl`。
 
 ## 使用
 
-- 在输入框输入问题，`Enter` 发送；每条消息是一张带左侧色条的卡片：你的消息为橙色条，
+- 输入框支持多行：`Enter` 发送，`Ctrl+J` 换行（输入框会随行数变高，超过 8 行后
+  内部滚动）。支持增强键盘协议（kitty / WezTerm / Ghostty 等）的终端里
+  `Shift+Enter` / `Ctrl+Enter` 也可以换行，也可以直接粘贴多行文本。
+  Windows 控制台会丢掉 `Ctrl` 修饰，`Ctrl+Enter` 会退化成 `Enter`（也就是发送），
+  所以 Windows 上换行请用 `Ctrl+J` 或直接粘贴。
+- 每条消息是一张带左侧色条的卡片：你的消息为橙色条，
   `AI` 回复为蓝色条，正文流式输出、逐块显示。
 - 工具调用显示为绿色（成功）或红色（失败）卡片：标题行是 `工具名(参数) · 耗时 ms`，
   下面是「参数」「结果」两节；点击卡片可折叠/展开（`▼` 展开、`▶` 折叠）。
@@ -117,7 +130,7 @@ model_name = your-model
 
 ## 工具
 
-共 13 个，顺序与旧版一致：
+共 16 个，前 13 个的顺序与旧版一致：
 
 1. `get_date`：当前本地日期、时间、星期（纯 Python，不依赖 `date` 命令）
 2. `isLeapyear`：闰年判断
@@ -131,7 +144,43 @@ model_name = your-model
 10. `delete_directory`
 11. `delete_file`
 12. `rename_path`
-13. `list_tools`：列出所有工具
+13. `searchWeb`：联网搜索（百度千帆「智能搜索生成」接口，返回标题、链接、日期、摘要）
+14. `fetchWeb`：读取网页正文（本地 `curl` 下载 + `trafilatura` 转 Markdown）
+15. `RunCli`：执行本机命令行程序，返回退出码、stdout、stderr
+16. `list_tools`：列出所有工具
+
+搜索工具的实现约定：
+
+- 只接受 `query`（必填）和 `count`（1–10，默认 5），结果整理成编号列表交回模型。
+- API Key 从 `config.ini` 的 `[search] baidu_qianfan_api_key` 读取，不在代码里硬编码；
+  配置页保存 `[llm]` 时会原样保留 `[search]` 段。
+- 缺配置、网络不通、HTTP 非 200、接口业务错误、返回体无法解析，都会变成
+  `ok=False` 的工具结果，附带中文原因，由模型转述给用户。
+
+网页抓取工具的实现约定：
+
+- `curl` 用参数列表调用（`subprocess.run([...])`，不使用 `shell=True`），只接受
+  `http` / `https` 地址，拒绝 `file://` 等本地路径；默认超时 30 秒。
+- `curl` 加 `-f`，HTTP 4xx/5xx 直接按失败处理，避免把错误页当正文。
+- 正文用 `trafilatura` 的 Markdown 输出（保留标题、段落、列表、表格、链接），开启
+  `favor_precision` 去掉导航栏、广告、页脚；超过 2 万字截断并注明。
+- 找不到 `curl`、访问超时、退出码非 0、HTML 解析失败、正文为空都转成带中文原因的
+  `ok=False` 结果。
+- Windows 10 及以上自带 `curl`；`trafilatura` 已写入 `requirements.txt`。
+
+命令行工具的实现约定：
+
+- 参数为 `command`（程序名或完整路径）与 `args`（字符串数组），内部拼成
+  `[command, *args]` 交给 `subprocess.run(..., shell=False)`，逐个参数传递，
+  不经过 Shell 解析——`args` 里的 `;`、`&&`、管道等只会作为普通字符串交给程序。
+- 工作目录固定为项目根目录；返回 JSON：`exit_code`、`stdout`、`stderr`，以及
+  两路各自的 `*_truncated` 标记；退出码非 0 时 `ok` 为 `false`，模型可据此重试。
+- 默认超时 30 秒（可由模型指定 1–120 秒），超时会终止进程并在 `error` 中说明；
+  stdout/stderr 各自超过 8000 字符时保留头尾、中间标注「已截断 N 字符」。
+- 找不到程序、参数格式错误、无法启动进程都会返回 `ok=false` 的结构化结果。
+
+> ⚠️ `RunCli` 以运行本程序的用户权限执行任意命令，本阶段故意没有命令白名单、
+> 黑名单或审批确认，仅适合受控教学实验环境；不要在生产或多人共用的机器上启用。
 
 文件工具限制在沙箱根目录内：相对路径以沙箱根为基准，绝对路径也必须在根内；
 只处理纯文本（UTF-8 / UTF-16 / GB18030，最大 2 MB）；删除根目录、重命名覆盖已有文件都会被拒绝。
@@ -140,10 +189,11 @@ model_name = your-model
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests -q          # 当前 55 个用例，约 4 秒
+pytest tests -q          # 当前 108 个用例，约 7 秒
 ```
 
-- 网络完全用 `tests/support.py` 里的 `FakeBackend` 脚本化替身，不发起真实请求。
+- 网络完全用 `tests/support.py` 里的 `FakeBackend` 脚本化替身，不发起真实请求；
+  搜索与抓取工具也通过注入假 transport / 假 curl 测试，跑测试不需要联网。
 - `tests/test_layers.py` 校验分层：`core` 不得 import `textual/rich/tui`，也不得做进程级 IO。
 - TUI 用 Textual 的 `run_test` 无头驱动，覆盖流式渲染、消息卡片与工具卡片（含耗时、
   参数/结果分节、点击折叠）、错误提示、命令、首次配置页，以及「回复必须逐块出现」
@@ -160,6 +210,8 @@ pytest tests -q          # 当前 55 个用例，约 4 秒
 - 只有成功的问答才写入上下文和存档；失败与中断不会污染历史。
 - 存档文件在首次成功问答时创建（旧版启动即创建，可能留下空文件）。
 - 日期工具改为纯 Python 实现，输出格式保持 `YYYY-MM-DD HH:MM:SS 星期X（UTC+0800）`。
+- 工具从 13 个扩展到 16 个：新增 `searchWeb`（联网搜索）、`fetchWeb`（抓网页）、
+  `RunCli`（执行本地命令行），仍然全部通过注册表统一描述、执行与错误归一。
 
 ## 后续扩展
 

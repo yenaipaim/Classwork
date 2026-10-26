@@ -344,13 +344,14 @@ Agent/Practice02/
 
 > 把 Practice02 重构为 **core + tui** 两层：对话、工具、会话、存档全部收进 `core/`，
 > 终端界面换成 **Textual**，后续 Web / Desktop 可直接复用同一套 core。
-> 工具能力与 Practice02 等价：13 个工具（2 个日期/闰年 + 10 个文件工具 + 工具清单）。
+> 工具 16 个：日期 / 闰年、10 个文件工具、联网搜索 `searchWeb`、网页抓取 `fetchWeb`、
+> 本地命令行 `RunCli`，外加工具清单。
 
 ```powershell
 python Agent\YenaiAgent\main.py
 ```
 
-首次运行若无 `config.ini`，会弹出中文配置页（Base URL / API Key / 模型名）；
+首次运行若无 `config.ini`，会弹出中文配置页（接口地址 / API 密钥 / 模型名称）；
 也可以直接编辑 `config.ini` 的 `[llm]` 段。
 
 ### 分层约定
@@ -369,6 +370,7 @@ python Agent\YenaiAgent\main.py
 - 消息卡片：用户橙色左边条、助手蓝色左边条，正文与角色标签分行
 - 工具调用卡片：`工具名(参数)`、✓/✗ 状态、耗时 ms、「参数」「结果」分节
 - 状态栏：就绪 / 思考中 / 工具运行 / 取消
+- 输入框：多行编辑，`Enter` 发送，`Ctrl+J` 换行（增强键盘终端也可用 `Shift+Enter`）
 - 快捷键：`Ctrl+Q` 退出，`Ctrl+C` 中断当前回复（空闲时退出），`Ctrl+L` 清屏
 - 命令：`/help` `/clear` `/reset` `/config` `/model` `/exit`
 
@@ -395,11 +397,11 @@ python -m pytest tests -q
 Python 依赖：
 
 ```powershell
-pip install mcp httpx uvicorn openai textual
+pip install mcp httpx uvicorn openai textual trafilatura
 ```
 
 > `openai` 供 `Agent/Practice01`、`Agent/Practice02` 与 `Agent/YenaiAgent` 使用；
-> `textual` 仅 `Agent/YenaiAgent` 需要；
+> `textual` / `trafilatura` 仅 `Agent/YenaiAgent` 需要（后者用于 `fetchWeb`）；
 > `mcp` / `httpx` / `uvicorn` 供 `Pet` 与 `LLM_MCP` 使用。
 
 ---

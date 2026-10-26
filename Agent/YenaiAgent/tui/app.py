@@ -14,7 +14,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.timer import Timer
-from textual.widgets import Footer, Header, Input, Static
+from textual.widgets import Footer, Header, Static
 
 from core.config import AppConfig, ConfigStore
 from core.errors import ConfigError
@@ -53,6 +53,7 @@ from .i18n import (
     describe_error,
 )
 from .screens.config_screen import ConfigScreen
+from .widgets.chat_input import ChatInput
 from .widgets.chat_log import ChatLog
 
 _FLUSH_INTERVAL = 0.05
@@ -66,9 +67,11 @@ class YenaiApp(App[None]):
     SUB_TITLE = APP_SUBTITLE
 
     BINDINGS = [
-        Binding("ctrl+q", "quit_app", "退出"),
-        Binding("ctrl+c", "interrupt", "中断"),
-        Binding("ctrl+l", "clear_screen", "清屏"),
+        # priority=True 保证输入框聚焦时 Ctrl+C 仍然是“中断/退出”，
+        # 而不是被 TextArea 自带的“复制”抢走。
+        Binding("ctrl+q", "quit_app", "退出", priority=True),
+        Binding("ctrl+c", "interrupt", "中断", priority=True),
+        Binding("ctrl+l", "clear_screen", "清屏", priority=True),
     ]
 
     def __init__(
@@ -101,13 +104,13 @@ class YenaiApp(App[None]):
         yield Header()
         yield ChatLog(id="chat")
         yield Static(READY, id="status")
-        yield Input(placeholder=INPUT_PLACEHOLDER, id="prompt")
+        yield ChatInput(placeholder=INPUT_PLACEHOLDER, id="prompt")
         yield Footer()
 
     def on_mount(self) -> None:
         self._chat = self.query_one("#chat", ChatLog)
         self._status = self.query_one("#status", Static)
-        self._prompt = self.query_one("#prompt", Input)
+        self._prompt = self.query_one("#prompt", ChatInput)
         self._chat.add_system(WELCOME)
         self._prompt.focus()
 
@@ -165,10 +168,10 @@ class YenaiApp(App[None]):
 
     # ---------------------------------------------------------------- 输入
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        value = event.value.strip()
-        self._prompt.value = ""
-        if not value:
+    def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
+        self._prompt.reset()
+        value = event.text.strip()
+        if not value or self._turn_busy:
             return
         if value.startswith("/"):
             self._run_command(value)
@@ -231,7 +234,7 @@ class YenaiApp(App[None]):
         self._stream_parts = []
         self._chat.add_user(question)
         self._status.update(THINKING)
-        self._prompt.disabled = True
+        self._prompt.read_only = True
         self._worker = self._run_turn(question)
 
     # ---------------------------------------------------------------- 后台
@@ -298,7 +301,7 @@ class YenaiApp(App[None]):
             self._flush_timer = None
         self._stream_parts = []
         self._turn_busy = False
-        self._prompt.disabled = False
+        self._prompt.read_only = False
         self._status.update(READY)
         self._prompt.focus()
 

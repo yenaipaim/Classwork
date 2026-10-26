@@ -60,3 +60,47 @@ def test_load_rejects_empty_required_key(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as excinfo:
         ConfigStore(path).load()
     assert "API 密钥" in excinfo.value.detail
+
+
+def test_load_reads_optional_search_section(tmp_path: Path) -> None:
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\nbase_url = http://x\napi_key = k\nmodel_name = m\n"
+        "[search]\nbaidu_qianfan_api_key = bce-key\n"
+        "endpoint = https://example.test/search\n",
+        encoding="utf-8",
+    )
+
+    config = ConfigStore(path).load()
+
+    assert config.search_api_key == "bce-key"
+    assert config.search_endpoint == "https://example.test/search"
+
+
+def test_load_without_search_section_uses_default_endpoint(tmp_path: Path) -> None:
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\nbase_url = http://x\napi_key = k\nmodel_name = m\n", encoding="utf-8"
+    )
+
+    config = ConfigStore(path).load()
+
+    assert config.search_api_key == ""
+    assert config.search_endpoint.startswith("https://qianfan.baidubce.com/")
+
+
+def test_save_preserves_search_section(tmp_path: Path) -> None:
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\nbase_url = http://old\napi_key = old\nmodel_name = old\n"
+        "[search]\nbaidu_qianfan_api_key = keep-me\n",
+        encoding="utf-8",
+    )
+    store = ConfigStore(path)
+
+    saved = store.save("http://example.test/v1", "secret", "model")
+
+    assert saved.search_api_key == "keep-me"
+    reloaded = store.load()
+    assert reloaded.search_api_key == "keep-me"
+    assert reloaded.base_url == "http://example.test/v1"

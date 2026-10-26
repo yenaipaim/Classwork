@@ -13,6 +13,9 @@ flowchart TD
         EVENTS["events<br/>TurnStarted / TextDelta / ToolCall* / Turn*"]
         REGISTRY["ToolRegistry<br/>ToolSpec + 执行与错误归一"]
         FILES["FileToolbox<br/>10 个文件工具（沙箱根注入）"]
+        SEARCH["SearchClient<br/>searchWeb 联网搜索"]
+        FETCH["WebFetcher<br/>fetchWeb 网页抓取（curl + trafilatura）"]
+        CLI["CommandRunner<br/>RunCli 本地命令行（shell=False）"]
         BACKEND["LlmBackend / OpenAIBackend"]
         TRANSCRIPT["Transcript<br/>chat_history/*.txt"]
         CONFIGSTORE["ConfigStore<br/>config.ini"]
@@ -34,8 +37,17 @@ flowchart TD
     SESSION --> BACKEND
     SESSION --> TRANSCRIPT
     REGISTRY --> FILES
+    REGISTRY --> SEARCH
+    REGISTRY --> FETCH
+    REGISTRY --> CLI
+    CONFIGSTORE -->|"[search] 段"| SEARCH
+    FETCH -->|"subprocess: curl"| CURL["本地 curl<br/>下载 HTML"]
+    FETCH -->|"HTML → Markdown"| TRAFILATURA["trafilatura<br/>正文提取"]
+    CLI -->|"subprocess.run(shell=False)"| PROGRAMS["本机已安装的程序<br/>（当前用户权限）"]
 
     classDef ui fill:#e8f0fe,stroke:#4a6fa5;
     classDef core fill:#f3f7ec,stroke:#5b7f3a;
+    classDef ext fill:#fdf3e7,stroke:#a5754a;
     class APP,CHAT,CONFIG,I18N ui;
-    class FACTORY,SESSION,CONTEXT,EVENTS,REGISTRY,FILES,BACKEND,TRANSCRIPT,CONFIGSTORE core;
+    class FACTORY,SESSION,CONTEXT,EVENTS,REGISTRY,FILES,SEARCH,FETCH,CLI,BACKEND,TRANSCRIPT,CONFIGSTORE core;
+    class CURL,TRAFILATURA,PROGRAMS ext;

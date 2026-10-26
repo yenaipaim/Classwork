@@ -15,6 +15,7 @@ from .constants import (
     MAX_TOKENS,
     MAX_TOOL_ROUNDS,
     REQUEST_TIMEOUT,
+    SEARCH_ENDPOINT,
     SYSTEM_PROMPT,
 )
 from .errors import AgentError, ConfigError, ErrorCode
@@ -29,6 +30,11 @@ KEY_LABELS = {
     "model_name": "模型名称",
 }
 
+# 网络搜索是可选配置：没有这一节时搜索工具仍会注册，只是调用时提示未配置
+SEARCH_SECTION = "search"
+SEARCH_KEY = "baidu_qianfan_api_key"
+SEARCH_ENDPOINT_KEY = "endpoint"
+
 
 @dataclass(frozen=True, slots=True)
 class AppConfig:
@@ -42,6 +48,8 @@ class AppConfig:
     history_turns: int = HISTORY_TURNS
     max_tool_rounds: int = MAX_TOOL_ROUNDS
     system_prompt: str = SYSTEM_PROMPT
+    search_api_key: str = ""
+    search_endpoint: str = SEARCH_ENDPOINT
 
 
 class ConfigStore:
@@ -87,10 +95,25 @@ class ConfigStore:
                     "配置项“%s”为空" % KEY_LABELS[key],
                 )
             values[key] = value
-        return AppConfig(**values)
+
+        search_api_key = ""
+        search_endpoint = SEARCH_ENDPOINT
+        if parser.has_section(SEARCH_SECTION):
+            search_api_key = parser.get(SEARCH_SECTION, SEARCH_KEY, fallback="").strip()
+            endpoint = parser.get(SEARCH_SECTION, SEARCH_ENDPOINT_KEY, fallback="").strip()
+            if endpoint:
+                search_endpoint = endpoint
+        return AppConfig(
+            **values,
+            search_api_key=search_api_key,
+            search_endpoint=search_endpoint,
+        )
 
     def save(self, base_url: str, api_key: str, model_name: str) -> AppConfig:
-        """写入配置文件并返回对应配置。"""
+        """写入配置文件并返回对应配置。
+
+        界面上只编辑 ``[llm]``；``[search]`` 属于运行数据，原样保留。
+        """
         values = {
             "base_url": (base_url or "").strip(),
             "api_key": (api_key or "").strip(),
@@ -105,10 +128,30 @@ class ConfigStore:
 
         parser = configparser.ConfigParser()
         parser[SECTION] = values
+        search_section = self._read_search_section()
+        if search_section:
+            parser[SEARCH_SECTION] = search_section
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with self._path.open("w", encoding="utf-8") as handle:
                 parser.write(handle)
         except OSError as exc:
             raise ConfigError(ErrorCode.CONFIG_INVALID, "无法写入配置文件：%s" % exc) from exc
-        return AppConfig(**values)
+        return AppConfig(
+            **values,
+            search_api_key=search_section.get(SEARCH_KEY, ""),
+            search_endpoint=search_section.get(SEARCH_ENDPOINT_KEY, "") or SEARCH_ENDPOINT,
+        )
+
+    def _read_search_section(self) -> dict[str, str]:
+        """读取已有的 ``[search]`` 段；文件损坏时按「没有」处理，不阻塞保存。"""
+        if not self._path.is_file():
+            return {}
+        parser = configparser.ConfigParser(interpolation=None)
+        try:
+            parser.read(self._path, encoding="utf-8")
+        except (configparser.Error, UnicodeDecodeError, OSError):
+            return {}
+        if not parser.has_section(SEARCH_SECTION):
+            return {}
+        return {key: value for key, value in parser.items(SEARCH_SECTION) if value.strip()}

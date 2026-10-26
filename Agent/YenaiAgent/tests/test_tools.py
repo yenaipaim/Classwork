@@ -42,7 +42,7 @@ def test_is_leap_year_rejects_non_integer() -> None:
 # ---------------------------------------------------------------- 注册表
 
 
-def test_registry_has_thirteen_tools_in_legacy_order(workspace: Path) -> None:
+def test_registry_has_sixteen_tools_in_legacy_order(workspace: Path) -> None:
     registry = build_registry(workspace)
     assert registry.names() == [
         "get_date",
@@ -57,9 +57,12 @@ def test_registry_has_thirteen_tools_in_legacy_order(workspace: Path) -> None:
         "delete_directory",
         "delete_file",
         "rename_path",
+        "searchWeb",
+        "fetchWeb",
+        "RunCli",
         "list_tools",
     ]
-    assert len(registry.schemas()) == 13
+    assert len(registry.schemas()) == 16
     assert registry.schemas()[0]["type"] == "function"
 
 
@@ -68,7 +71,7 @@ def test_list_tools_reports_all_tools(workspace: Path) -> None:
     outcome = registry.execute("list_tools", "{}")
     assert outcome.ok is True
     payload = json.loads(outcome.output)
-    assert payload["count"] == 13
+    assert payload["count"] == 16
     assert {item["name"] for item in payload["tools"]} == set(registry.names())
 
 

@@ -130,6 +130,14 @@ Screen {
 
 #prompt {
     margin: 0 1;
+    height: auto;
+    min-height: 1;
+    max-height: 8;
+    background: $surface;
+}
+
+#prompt:focus {
+    background: $surface-lighten-1;
 }
 
 ConfigScreen {

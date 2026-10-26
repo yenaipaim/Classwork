@@ -13,6 +13,7 @@ from core.llm.types import LlmChunk
 from support import FakeBackend, RaisingBackend, text_chunks, tool_script
 from tui.app import YenaiApp
 from tui.screens.config_screen import ConfigScreen
+from tui.widgets.chat_input import ChatInput
 
 
 async def wait_idle(app: YenaiApp, pilot, timeout: float = 5.0) -> None:
@@ -25,13 +26,88 @@ async def wait_idle(app: YenaiApp, pilot, timeout: float = 5.0) -> None:
 
 
 async def submit(app: YenaiApp, pilot, text: str) -> None:
-    app.query_one("#prompt", Input).value = text
+    app.query_one("#prompt", ChatInput).load_text(text)
     await pilot.press("enter")
     await pilot.pause()
 
 
 def make_app(session, tmp_path) -> YenaiApp:
     return YenaiApp(session=session, store=ConfigStore(tmp_path / "config.ini"))
+
+
+async def test_enter_submits(make_session, tmp_path) -> None:
+    """Enter 是发送键。"""
+    backend = FakeBackend([text_chunks("好")])
+    session = make_session(backend)
+    app = make_app(session, tmp_path)
+
+    async with app.run_test() as pilot:
+        app.query_one("#prompt", ChatInput).load_text("hi")
+        await pilot.press("enter")
+        await wait_idle(app, pilot)
+
+        assert session.history[0]["content"] == "hi"
+
+
+async def test_shift_enter_inserts_newline(make_session, tmp_path) -> None:
+    """Shift+Enter 同样只换行，不发送消息。"""
+    app = make_app(make_session(FakeBackend()), tmp_path)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", ChatInput)
+        prompt.load_text("第一行")
+        prompt.cursor_location = (0, len("第一行"))
+
+        await pilot.press("shift+enter")
+        await pilot.pause()
+
+        assert prompt.text == "第一行\n"
+        assert len(app._chat.children) == 1  # 只有欢迎语，没有发出消息
+
+
+async def test_ctrl_enter_inserts_newline(make_session, tmp_path) -> None:
+    """增强键盘协议下 Ctrl+Enter 换行（Windows 控制台会退化成 Enter 发送）。"""
+    app = make_app(make_session(FakeBackend()), tmp_path)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", ChatInput)
+        prompt.load_text("hi")
+        prompt.cursor_location = (0, 2)
+
+        await pilot.press("ctrl+enter")
+        await pilot.pause()
+
+        assert prompt.text == "hi\n"
+        assert len(app._chat.children) == 1  # 只有欢迎语，没有发出消息
+
+
+async def test_ctrl_j_inserts_newline(make_session, tmp_path) -> None:
+    """Ctrl+J 是 Windows 控制台上唯一可靠的换行键。"""
+    app = make_app(make_session(FakeBackend()), tmp_path)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", ChatInput)
+        prompt.load_text("a")
+        prompt.cursor_location = (0, 1)
+
+        await pilot.press("ctrl+j")
+        await pilot.pause()
+
+        assert prompt.text == "a\n"
+
+
+async def test_multiline_question_is_sent_whole(make_session, tmp_path) -> None:
+    backend = FakeBackend([text_chunks("好")])
+    session = make_session(backend)
+    app = make_app(session, tmp_path)
+
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "第一行\n第二行")
+        await wait_idle(app, pilot)
+
+        assert backend.requests[0].messages[-1]["content"] == "第一行\n第二行"
+        assert session.history[0]["content"] == "第一行\n第二行"
+        assert app.query_one("#prompt", ChatInput).text == ""
 
 
 async def test_streamed_reply_is_rendered(make_session, tmp_path) -> None:
@@ -111,7 +187,7 @@ async def test_request_error_is_rendered(make_session, tmp_path) -> None:
 
         assert session.history == []
         assert any(child.has_class("error") for child in app._chat.children)
-        assert not app._prompt.disabled
+        assert not app._prompt.read_only
 
 
 async def test_help_clear_and_reset_commands(make_session, tmp_path) -> None:

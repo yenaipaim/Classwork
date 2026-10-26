@@ -12,13 +12,22 @@ from .llm.backend import LlmBackend, OpenAIBackend
 from .paths import DEFAULT_HISTORY_DIR, DEFAULT_WORKSPACE_ROOT
 from .session import AgentSession
 from .tools.builtins import get_date, is_leap_year
+from .tools.cli import CommandRunner, build_cli_tool
 from .tools.files import FileToolbox
+from .tools.search import SearchClient, build_search_tool
 from .tools.spec import ToolRegistry, ToolSpec
+from .tools.web import WebFetcher, build_fetch_tool
 from .transcript import Transcript
 
 
-def build_registry(workspace_root: Path | str = DEFAULT_WORKSPACE_ROOT) -> ToolRegistry:
-    """按旧版顺序注册 13 个工具。"""
+def build_registry(
+    workspace_root: Path | str = DEFAULT_WORKSPACE_ROOT,
+    *,
+    search_client: SearchClient | None = None,
+    fetcher: WebFetcher | None = None,
+    cli_runner: CommandRunner | None = None,
+) -> ToolRegistry:
+    """按旧版顺序注册文件/计算工具，末尾追加联网、网页、命令行与工具清单。"""
     registry = ToolRegistry()
     registry.register(
         ToolSpec(
@@ -44,6 +53,17 @@ def build_registry(workspace_root: Path | str = DEFAULT_WORKSPACE_ROOT) -> ToolR
     )
     FileToolbox(workspace_root).register(registry)
     registry.register(
+        build_search_tool(search_client if search_client is not None else SearchClient(""))
+    )
+    registry.register(build_fetch_tool(fetcher if fetcher is not None else WebFetcher()))
+    registry.register(
+        build_cli_tool(
+            cli_runner
+            if cli_runner is not None
+            else CommandRunner(cwd=str(workspace_root))
+        )
+    )
+    registry.register(
         ToolSpec(
             name="list_tools",
             description="列出当前程序注册的全部工具名称和用途",
@@ -68,7 +88,12 @@ def create_session(
             config.base_url, config.api_key, config.request_timeout
         )
     if registry is None:
-        registry = build_registry(workspace_root)
+        registry = build_registry(
+            workspace_root,
+            search_client=SearchClient(
+                config.search_api_key, endpoint=config.search_endpoint
+            ),
+        )
     transcript = Transcript(history_dir, config.model_name)
     return AgentSession(backend, registry, config, transcript)
 
