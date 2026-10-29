@@ -16,6 +16,7 @@ YenaiAgent/
 │   ├── events.py         # 一轮问答对外暴露的事件（frozen dataclass）
 │   ├── factory.py        # 唯一装配点：create_session(...)
 │   ├── paths.py          # 包根、默认配置、默认存档目录、默认沙箱根
+│   ├── skills.py         # Agent Skills：SKILL.md 扫描、清单注入、loadSkill 工具
 │   ├── session.py        # AgentSession / CancelToken：流式、工具循环、存档提交
 │   ├── transcript.py     # chat_history/*.txt 存档（格式与旧版一致）
 │   ├── llm/              # 后端协议、请求/流式块类型、工具调用收集器
@@ -34,8 +35,8 @@ YenaiAgent/
 └── architecture.mmd      # 分层与依赖方向图
 ```
 
-`config.ini`、`chat_history/`、解压技能的 `_skills_extract/` 与各类缓存由**仓库根目录**
-的 `.gitignore` 统一忽略，不会提交到仓库。
+`config.ini`、`chat_history/`、解压技能的 `_skills_extract/`、本地技能目录
+`.agents/` 与各类缓存由**仓库根目录**的 `.gitignore` 统一忽略，不会提交到仓库。
 
 ## 分层契约
 
@@ -43,7 +44,8 @@ YenaiAgent/
   `print` / `input` / `sys.exit`。
 - 错误统一用 `ErrorCode` 表达，中文文案只放在 `tui/i18n.py`；用户看得到的提示
   全部是中文。
-- 唯一的装配点是 `core/factory.py:create_session(config, *, workspace_root, history_dir, backend=None)`；
+- 唯一的装配点是 `core/factory.py:create_session(config, *, workspace_root, history_dir,
+  backend=None, project_root=None, skills=None)`；
   界面层只拿 `AgentSession` 和 `AgentEvent`，不直接碰 OpenAI SDK。
 - `core/tools/files.py` 的沙箱根由构造参数注入（旧版是模块级 `PROJECT_ROOT`），
   换界面或换工作目录时行为可预测。
@@ -162,7 +164,7 @@ baidu_qianfan_api_key = your-baidu-key
 
 ## 工具
 
-共 16 个，前 13 个的顺序与旧版一致：
+共 17 个，前 13 个的顺序与旧版一致：
 
 1. `get_date`：当前本地日期、时间、星期（纯 Python，不依赖 `date` 命令）
 2. `isLeapyear`：闰年判断
@@ -179,7 +181,8 @@ baidu_qianfan_api_key = your-baidu-key
 13. `searchWeb`：联网搜索（百度千帆「智能搜索生成」接口，返回标题、链接、日期、摘要）
 14. `fetchWeb`：读取网页正文（本地 `curl` 下载 + `trafilatura` 转 Markdown）
 15. `RunCli`：执行本机命令行程序，返回退出码、stdout、stderr
-16. `list_tools`：列出所有工具
+16. `loadSkill`：加载 Agent Skills 技能的 `SKILL.md` 或技能目录内的其他文件（见「技能」）
+17. `list_tools`：列出所有工具
 
 搜索工具的实现约定：
 
@@ -218,16 +221,50 @@ baidu_qianfan_api_key = your-baidu-key
 只处理纯文本（UTF-8 / UTF-16 / GB18030，最大 2 MB）；删除根目录、重命名覆盖已有文件都会被拒绝。
 沙箱根默认为项目目录，`--workspace` / `/workspace` 可切换到其他目录（见「工作区」）。
 
+## 技能（Agent Skills）
+
+启动时按 **程序启动目录**（不是工作区）扫描 `.agents/skills/` 下的技能目录，
+扫描只进行一次；运行中 `/workspace` 切换工作区不会改变技能清单。
+
+- 每个技能是一个子目录，内含顶层 `SKILL.md`；frontmatter 里声明 `name` 与
+  `description`（其余字段忽略），示例：
+
+  ```markdown
+  ---
+  name: deploy-helper
+  description: 部署本项目的辅助流程与注意事项
+  ---
+
+  # 部署流程（正文只在模型调用 loadSkill 时才进入上下文）
+  ```
+
+- 初始化只读取 `name` 与 `description` 两个字段，正文不会加载；技能清单以
+  `- name: description` 的形式注入 System Prompt，并附一句「用 `loadSkill` 加载」的说明。
+- `loadSkill` 工具的参数：
+  - `name`（必填）：技能名，精确匹配优先，找不到时按大小写不敏感回退；只给 `name`
+    时返回该技能 `SKILL.md` 的全文。
+  - `filename`（可选）：技能附带的其他文件。支持相对技能目录、相对项目根、绝对路径；
+    先精确匹配，找不到再在技能目录内递归按文件名查找——唯一命中就直接读取，
+    多个同名文件会返回候选路径列表让模型选。
+- 安全边界：`loadSkill` 的所有读取都限制在该技能目录内，越界路径（`../` 或目录外的
+  绝对路径）会直接拒绝；文件按 UTF-8（含 BOM）读取，回退 GB18030，超过 2 MB 截断。
+- 缺 `SKILL.md`、frontmatter 不完整或 `name`/`description` 缺失的目录会被跳过；
+  重名时先扫到的生效。跳过原因可通过 `session.skills.skipped` 查看（调试用）。
+
+> 想把自己的技能纳入版本管理，从仓库根 `.gitignore` 删掉 `.agents/` 一行即可。
+
 ## 开发与测试
 
 ```bash
 pip install -r requirements.txt   # 运行依赖与测试依赖都在这一份里
-pytest tests -q          # 当前 123 个用例，约 11 秒
+pytest tests -q          # 当前 149 个用例，约 11 秒
 ```
 
 - 网络完全用 `tests/support.py` 里的 `FakeBackend` 脚本化替身，不发起真实请求；
   搜索与抓取工具也通过注入假 transport / 假 curl 测试，跑测试不需要联网。
 - `tests/test_layers.py` 校验分层：`core` 不得 import `textual/rich/tui`，也不得做进程级 IO。
+- `tests/test_skills.py` 覆盖技能发现与跳过规则、frontmatter 解析、清单注入与
+  `loadSkill` 的路径解析 / 沙箱拒绝场景。
 - TUI 用 Textual 的 `run_test` 无头驱动，覆盖流式渲染、消息卡片与工具卡片（含耗时、
   参数/结果分节、点击折叠）、错误提示、命令、首次配置页，以及「回复必须逐块出现」
   的流式回归测试（慢速后端断言中间态）。
@@ -243,6 +280,8 @@ pytest tests -q          # 当前 123 个用例，约 11 秒
 - 只有成功的问答才写入上下文和存档；失败与中断不会污染历史。
 - 存档文件在首次成功问答时创建（旧版启动即创建，可能留下空文件）。
 - 日期工具改为纯 Python 实现，输出格式保持 `YYYY-MM-DD HH:MM:SS 星期X（UTC+0800）`。
+- 新增 Agent Skills：`.agents/skills/` 里的技能按 `SKILL.md` frontmatter 自动登记，
+  清单进 System Prompt，正文按需经 `loadSkill` 加载（Practice02 没有的能力）。
 - 工具从 13 个扩展到 16 个：新增 `searchWeb`（联网搜索）、`fetchWeb`（抓网页）、
   `RunCli`（执行本地命令行），仍然全部通过注册表统一描述、执行与错误归一。
 

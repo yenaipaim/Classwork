@@ -16,7 +16,7 @@ Anything/
 ├── LLM_UPLOAD_MCP/         ← 第三次课：AnythingLLM 文档上传页
 ├── Agent/Practice01/       ← 第四次课：多轮对话命令行工具
 ├── Agent/Practice02/       ← 第五次课：本地文件操作工具扩展
-└── Agent/YenaiAgent/       ← 第六、七次课：core/TUI 分层重构（Textual 界面）
+└── Agent/YenaiAgent/       ← 第六~八次课：core/TUI 分层重构 + Agent Skills 技能加载
 ```
 
 | 目录 | 课程 | 简介 | 启动方式 |
@@ -26,7 +26,7 @@ Anything/
 | [LLM_UPLOAD_MCP/](LLM_UPLOAD_MCP/README.md) | 第 3 次 | 文档上传 & 嵌入 AnythingLLM 的网页 | 浏览器直接打开 `index.html` |
 | [Agent/Practice01/](Agent/Practice01/README.md) | 第 4 次 | 多轮对话 CLI（流式输出 · 终端转圈动画） | `python main.py` |
 | [Agent/Practice02/](Agent/Practice02/README.md) | 第 5 次 | 多轮对话 CLI + 13 个工具（含 10 个本地文件操作） | `python Agent\Practice02\main.py` |
-| [Agent/YenaiAgent/](Agent/YenaiAgent/README.md) | 第 6-7 次 | core + tui 分层：Textual 界面、16 个工具、可切换工作区 | `python Agent\YenaiAgent\main.py` |
+| [Agent/YenaiAgent/](Agent/YenaiAgent/README.md) | 第 6-8 次 | core + tui 分层：Textual 界面、17 个工具、可切换工作区、Agent Skills 技能加载 | `python Agent\YenaiAgent\main.py` |
 
 ---
 
@@ -344,12 +344,12 @@ Agent/Practice02/
 
 ---
 
-## Agent/YenaiAgent — 分层重构 TUI 版（第六、七次课）
+## Agent/YenaiAgent — 分层重构 TUI 版（第六~八次课）
 
 > 把 Practice02 重构为 **core + tui** 两层：对话、工具、会话、存档全部收进 `core/`，
 > 终端界面换成 **Textual**，后续 Web / Desktop 可直接复用同一套 core。
-> 工具 16 个：日期 / 闰年、10 个文件工具、联网搜索 `searchWeb`、网页抓取 `fetchWeb`、
-> 本地命令行 `RunCli`，外加工具清单。
+> 工具 17 个：日期 / 闰年、10 个文件工具、联网搜索 `searchWeb`、网页抓取 `fetchWeb`、
+> 本地命令行 `RunCli`、技能加载 `loadSkill`，外加工具清单。
 
 ```powershell
 python Agent\YenaiAgent\main.py
@@ -393,6 +393,22 @@ baidu_qianfan_api_key = your-key
 - 稳定性：状态栏每秒显示等待秒数与工具调用次数；模型空响应、请求失败会明确报错，
   不会静默卡住；`Ctrl+C` 中断（正在执行的工具最长再等约 30 秒）
 
+### Agent Skills 技能加载（第八次课）
+
+按 Agent Skills 规范（`SKILL.md` + YAML frontmatter）实现动态技能加载，自实现解析器，
+不引入第三方依赖：
+
+- 启动时以**程序启动目录**扫描 `.agents/skills/` 下的技能目录，每个子目录的顶层
+  `SKILL.md` 声明 `name` 与 `description`；初始化只读这两个字段，正文不进上下文。
+- 技能清单（`- name: description` 列表）注入 System Prompt；模型需要细节时调用
+  `loadSkill(name, filename?)`：只给 `name` 返回 `SKILL.md` 全文，给 `filename` 则读取
+  技能附带的其他文件（支持相对技能目录 / 相对项目根 / 绝对路径，同名文件列出候选让模型选）。
+- 读取严格限制在该技能目录内，越界路径直接拒绝；缺 `SKILL.md`、缺字段或重名的目录
+  自动跳过（`session.skills.skipped` 可查）。
+- `.agents/` 已加入 `.gitignore`；想版本化自己的技能，删掉该行即可。
+
+完整约定见 [Agent/YenaiAgent/README.md](Agent/YenaiAgent/README.md) 的「技能（Agent Skills）」一节。
+
 ### 测试
 
 ```powershell
@@ -401,7 +417,8 @@ python -m pytest tests -q
 ```
 
 覆盖配置读写、上下文裁剪、工具注册表、文件沙箱越界与工作区切换、会话事件流、
-存档格式、分层约束（core 不得依赖 UI）以及 TUI 无头测试，当前 123 个用例。
+存档格式、Skill 发现与加载、分层约束（core 不得依赖 UI）以及 TUI 无头测试，
+当前 149 个用例。
 
 跑测试先装：`pip install pytest pytest-asyncio`（或 `pip install -r Agent\YenaiAgent\requirements.txt` 一次装齐）。
 
@@ -435,6 +452,7 @@ pip install mcp httpx uvicorn openai textual trafilatura
 | `config.json` | `Pet/web` 的 AI 接口密钥（明文 Key） |
 | `chat_history/` | 每次运行的对话存档 |
 | `_skills_extract/` | YenaiAgent 解压技能包的临时目录（源 zip 在 `F:\yenaipaim\Plugin`） |
+| `.agents/` | YenaiAgent 的 Agent Skills 本地技能目录（`.agents/skills/`） |
 | `data/` | 临时图片与模板 |
 | `__pycache__/`、`*.py[cod]`、`.pytest_cache/`、`.venv/` | 缓存与虚拟环境 |
 

@@ -15,3 +15,6 @@ data/
 
 
 _skills_extract/
+
+# Agent Skills 本地技能目录（想版本化技能就删掉这一行）
+.agents/
