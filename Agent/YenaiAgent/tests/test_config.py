@@ -159,3 +159,45 @@ def test_save_preserves_search_section(tmp_path: Path) -> None:
     reloaded = store.load()
     assert reloaded.search_api_key == "keep-me"
     assert reloaded.base_url == "http://example.test/v1"
+
+
+def test_load_reads_skill_roots(tmp_path: Path) -> None:
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\nbase_url = http://x\napi_key = k\nmodel_name = m\n"
+        "[skills]\n"
+        "; 分号分隔多个根，%TEMP% 这类写法不能被当成插值\n"
+        "roots = D:\\skills ; %TEMP%\\skills\n",
+        encoding="utf-8",
+    )
+
+    config = ConfigStore(path).load()
+
+    assert config.skill_roots == ("D:\\skills", "%TEMP%\\skills")
+
+
+def test_save_preserves_skill_roots(tmp_path: Path) -> None:
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\nbase_url = http://old\napi_key = old\nmodel_name = old\n"
+        "[skills]\nroots = relative/skills\n",
+        encoding="utf-8",
+    )
+    store = ConfigStore(path)
+
+    saved = store.save("http://example.test/v1", "secret", "model")
+
+    assert saved.skill_roots == ("relative/skills",)
+    text = path.read_text(encoding="utf-8")
+    assert "[skills]" in text
+    assert "relative/skills" in text
+    assert store.load().skill_roots == ("relative/skills",)
+
+
+def test_config_without_skills_section_has_no_roots(tmp_path: Path) -> None:
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\nbase_url = http://x\napi_key = k\nmodel_name = m\n",
+        encoding="utf-8",
+    )
+    assert ConfigStore(path).load().skill_roots == ()

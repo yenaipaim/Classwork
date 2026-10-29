@@ -36,6 +36,15 @@ MODEL_SWITCHED = "模型已切换为：%s（上下文保留，可继续提问）
 WORKSPACE_USAGE = "当前工作区：%s；用 /workspace 目录路径 切换（相对路径按当前进程目录解析）。"
 WORKSPACE_SWITCHED = "工作区已切换：%s；文件工具沙箱与 RunCli 工作目录随之改变，上下文保留。"
 WORKSPACE_SWITCH_FAILED = "切换工作区失败：%s"
+SKILLS_NEED_SESSION = "尚未创建会话（先完成模型配置），无法查看技能。"
+SKILLS_HEADER = "技能扫描目录：%s（启动时确定，切换工作区不影响）"
+SKILLS_ROOTS_HEADER = "技能扫描目录（%d 个，启动时确定，切换工作区不影响）："
+SKILLS_ROOT_ITEM = "  - %s"
+SKILLS_LOADED = "已加载 %d 个技能："
+SKILLS_ITEM = "  - %s：%s"
+SKILLS_NONE = "没有发现任何技能。"
+SKILLS_ADD_HINT = "在技能目录下建 <技能名>\\SKILL.md（frontmatter 含 name 与 description）后重启即可。"
+SKILLS_SKIPPED = "跳过 %d 个目录："
 
 HELP_TEXT = """可用命令：
   /help    显示本帮助
@@ -43,6 +52,7 @@ HELP_TEXT = """可用命令：
   /reset   清空上下文并另起存档
   /model   查看当前模型；/model 名称 切换模型（保留上下文）
   /workspace 查看当前工作区；/workspace 目录 切换（文件工具与命令的范围）
+  /skills  查看已加载的 Agent Skills 技能与跳过原因
   /config  修改模型配置（会开始新会话）
   /exit    退出程序
 快捷键：Enter 发送、Ctrl+J 换行（部分终端也可用 Shift+Enter / Ctrl+Enter 换行）、Ctrl+C 中断/退出、Ctrl+Q 退出、Ctrl+L 清屏"""

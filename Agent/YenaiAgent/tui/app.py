@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from dataclasses import replace
 from pathlib import Path
+from typing import Sequence
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -46,6 +47,14 @@ from .i18n import (
     MODEL_USAGE,
     NEED_CONFIG,
     READY,
+    SKILLS_ADD_HINT,
+    SKILLS_ITEM,
+    SKILLS_LOADED,
+    SKILLS_NEED_SESSION,
+    SKILLS_NONE,
+    SKILLS_ROOT_ITEM,
+    SKILLS_ROOTS_HEADER,
+    SKILLS_SKIPPED,
     STATUS_THINKING_ELAPSED,
     STATUS_TOOL_RUNNING,
     THINKING,
@@ -61,6 +70,12 @@ from .widgets.chat_input import ChatInput
 from .widgets.chat_log import ChatLog
 
 _FLUSH_INTERVAL = 0.05
+
+
+def _skill_description(text: str, limit: int = 120) -> str:
+    """技能描述压成一行，过长时截断，用于 `/skills` 展示。"""
+    one_line = " ".join(text.split())
+    return one_line if len(one_line) <= limit else one_line[:limit] + "…"
 
 
 class YenaiApp(App[None]):
@@ -87,6 +102,7 @@ class YenaiApp(App[None]):
         backend: LlmBackend | None = None,
         session: AgentSession | None = None,
         store: ConfigStore | None = None,
+        skill_dirs: Sequence[Path | str] | None = None,
     ) -> None:
         super().__init__()
         self._store = store or ConfigStore(config_path or DEFAULT_CONFIG_PATH)
@@ -94,6 +110,8 @@ class YenaiApp(App[None]):
         self._workspace_root = Path(workspace_root or DEFAULT_WORKSPACE_ROOT)
         self._backend = backend
         self._session = session
+        # 额外的技能根目录：命令行/环境变量传入，最终交给 create_session
+        self._skill_dirs = tuple(skill_dirs or ())
 
         self._cancel = CancelToken()
         self._worker = None
@@ -172,6 +190,7 @@ class YenaiApp(App[None]):
             workspace_root=self._workspace_root,
             history_dir=self._history_dir,
             backend=self._backend,
+            skill_roots=self._skill_dirs or None,
         )
         self._status.update(READY)
 
@@ -207,6 +226,8 @@ class YenaiApp(App[None]):
             self._switch_model(argument)
         elif command == "/workspace":
             self._switch_workspace(argument)
+        elif command == "/skills":
+            self._show_skills()
         else:
             self._chat.add_system(UNKNOWN_COMMAND % raw, kind="error")
 
@@ -255,6 +276,36 @@ class YenaiApp(App[None]):
             return
         self._workspace_root = new_root
         self._chat.add_system(WORKSPACE_SWITCHED % new_root)
+
+    def _show_skills(self) -> None:
+        """`/skills` 查看技能扫描目录、已加载清单与跳过原因。"""
+        if self._session is None:
+            self._chat.add_system(SKILLS_NEED_SESSION, kind="error")
+            return
+        skills = self._session.skills
+        if skills is None:
+            self._chat.add_system("\n".join([SKILLS_NONE, SKILLS_ADD_HINT]))
+            return
+        roots = skills.roots
+        lines = [SKILLS_ROOTS_HEADER % len(roots)]
+        lines.extend(SKILLS_ROOT_ITEM % str(root) for root in roots)
+        self._chat.add_system("\n".join(lines))
+        if skills:
+            lines = [SKILLS_LOADED % len(skills.skills)]
+            lines.extend(
+                SKILLS_ITEM % (info.name, _skill_description(info.description))
+                for info in skills.skills
+            )
+            self._chat.add_system("\n".join(lines))
+        else:
+            self._chat.add_system("\n".join([SKILLS_NONE, SKILLS_ADD_HINT]))
+        if skills.skipped:
+            lines = [SKILLS_SKIPPED % len(skills.skipped)]
+            lines.extend(
+                SKILLS_ITEM % (Path(item["directory"]).name, item["reason"])
+                for item in skills.skipped
+            )
+            self._chat.add_system("\n".join(lines))
 
     def _start_turn(self, question: str) -> None:
         if self._turn_busy:

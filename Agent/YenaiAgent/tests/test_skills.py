@@ -18,6 +18,8 @@ from core.skills import (
     SkillLibrary,
     build_load_skill_tool,
     parse_frontmatter,
+    resolve_skill_roots,
+    split_skill_roots,
 )
 from support import FakeBackend, text_chunks, tool_script
 
@@ -324,3 +326,80 @@ def test_session_without_skills_keeps_old_behavior(project: Path, tmp_path) -> N
 
     assert PROMPT_HEADER not in backend.requests[0].messages[0]["content"]
     assert "loadSkill" not in registry.names()
+
+
+# ---------------------------------------------------------------- 多个技能根目录
+
+
+def test_library_scans_multiple_roots_and_dedupes(tmp_path: Path) -> None:
+    first = make_project(tmp_path / "one")
+    second = tmp_path / "two"
+    (second / "gamma").mkdir(parents=True)
+    (second / "gamma" / "SKILL.md").write_text(
+        "---\nname: gamma\ndescription: Gamma skill.\n---\nbody", encoding="utf-8"
+    )
+    # 第二个根里放一份同名 alpha：先扫到的第一根生效，这里应被记为重复
+    (second / "alpha-copy").mkdir()
+    (second / "alpha-copy" / "SKILL.md").write_text(SIMPLE_MD, encoding="utf-8")
+
+    roots = [first / ".agents" / "skills", second]
+    library = SkillLibrary(first, roots=roots)
+
+    assert library.roots == [roots[0].resolve(), second.resolve()]
+    assert library.skills_dir == roots[0].resolve()
+    assert [info.name for info in library.skills] == ["alpha", "beta", "gamma"]
+    assert library.get("alpha").directory == (roots[0] / "alpha").resolve()
+    duplicates = [item for item in library.skipped if "名称重复" in item["reason"]]
+    assert len(duplicates) == 2
+    assert "已加载自" in duplicates[-1]["reason"]
+
+
+def test_library_records_missing_root(tmp_path: Path) -> None:
+    missing = tmp_path / "absent"
+    library = SkillLibrary(tmp_path, roots=[missing])
+
+    assert library.skills == []
+    assert library.skipped == [
+        {"directory": str(missing.resolve()), "reason": "技能根目录不存在"}
+    ]
+
+
+def test_split_and_resolve_skill_roots(tmp_path: Path) -> None:
+    assert split_skill_roots(" a ; b ,\n c ") == ["a", "b", "c"]
+    assert split_skill_roots("") == []
+
+    base = tmp_path / "proj"
+    base.mkdir()
+    # 空配置 → 与旧版完全一致的默认根
+    assert resolve_skill_roots(base) == [base.resolve() / ".agents" / "skills"]
+
+    roots = resolve_skill_roots(
+        base, ["shared", "shared;%s" % (base / "abs"), str(base / "abs")]
+    )
+    assert roots == [base.resolve() / "shared", (base / "abs").resolve()]
+
+
+def test_create_session_accepts_explicit_skill_roots(tmp_path: Path) -> None:
+    from core.factory import create_session
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    extra = tmp_path / "extra"
+    (extra / "delta").mkdir(parents=True)
+    (extra / "delta" / "SKILL.md").write_text(
+        "---\nname: delta\ndescription: Delta skill.\n---\n", encoding="utf-8"
+    )
+    config = AppConfig(base_url="http://x", api_key="k", model_name="m")
+
+    session = create_session(
+        config,
+        workspace_root=project,
+        history_dir=tmp_path / "history",
+        backend=FakeBackend([text_chunks("好")]),
+        project_root=project,
+        skill_roots=[str(extra)],
+    )
+
+    assert session.skills is not None
+    assert [info.name for info in session.skills.skills] == ["delta"]
+    assert "loadSkill" in session.registry.names()

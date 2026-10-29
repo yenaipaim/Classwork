@@ -349,3 +349,50 @@ async def test_workspace_command_reports_switch_and_errors(make_session, tmp_pat
         await submit(app, pilot, "/workspace %s" % (tmp_path / "missing_ws"))
         assert any("切换工作区失败" in text for text in _system_texts(app))
         assert app._workspace_root == new_ws.resolve()  # 失败不改变工作区
+
+
+async def test_skills_command_lists_loaded_and_skipped(
+    config, workspace, history_dir, tmp_path
+) -> None:
+    """/skills 显示扫描目录、已加载技能与跳过原因，且不泄露正文。"""
+    from core.factory import create_session
+    from core.skills import SkillLibrary
+    from tui.i18n import HELP_TEXT
+
+    project = tmp_path / "proj"
+    skill_dir = project / ".agents" / "skills" / "demo"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: 演示技能\n---\n正文内容不应出现在提示里\n",
+        encoding="utf-8",
+    )
+    # 目录里没有 SKILL.md，会被跳过并给出原因
+    (project / ".agents" / "skills" / "broken").mkdir()
+
+    session = create_session(
+        config,
+        workspace_root=workspace,
+        history_dir=history_dir,
+        backend=FakeBackend(),
+        skills=SkillLibrary(project),
+    )
+    app = make_app(session, tmp_path)
+
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "/skills")
+        joined = "\n".join(_system_texts(app))
+
+    assert str(project / ".agents" / "skills") in joined
+    assert "demo" in joined and "演示技能" in joined
+    assert "broken" in joined and "目录内没有 SKILL.md" in joined
+    assert "正文内容不应出现在提示里" not in joined
+    assert "/skills" in HELP_TEXT
+
+
+def test_parser_accepts_repeated_skills_dir() -> None:
+    from tui.__main__ import build_parser
+
+    parser = build_parser()
+    assert parser.parse_args([]).skills_dirs is None
+    args = parser.parse_args(["--skills-dir", "a", "--skills-dir", "b"])
+    assert args.skills_dirs == ["a", "b"]

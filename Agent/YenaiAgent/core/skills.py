@@ -1,7 +1,8 @@
 """Agent Skills 规范的 Skill 动态加载。
 
-初始化时以「程序启动时的工作目录」为项目根，扫描 `.agents/skills/` 下的各个
-Skill 子目录：每个子目录顶层的 `SKILL.md` 以 YAML Frontmatter 声明必需的
+初始化时以「程序启动时的工作目录」为项目根，扫描技能根目录（默认为
+`.agents/skills/`，也可由 `config.ini` 的 `[skills] roots` 或 `--skills-dir`
+指定，支持多个根）下的各个 Skill 子目录：每个子目录顶层的 `SKILL.md` 以 YAML Frontmatter 声明必需的
 `name` 与 `description`。本阶段只登记这两个字段，不读取正文。
 
 完整内容按需进入上下文：`loadSkill` 工具被模型调用时才读文件，读取范围
@@ -11,9 +12,11 @@ Skill 子目录：每个子目录顶层的 `SKILL.md` 以 YAML Frontmatter 声�
 from __future__ import annotations
 
 import locale
+import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from .errors import ToolError
 from .tools.spec import ToolSpec
@@ -27,6 +30,10 @@ PROMPT_DESCRIPTION_MAX_CHARS = 400
 
 SKILL_FILE = "SKILL.md"
 SKILLS_DIR_PARTS = (".agents", "skills")
+
+# config.ini 里配置额外技能根目录的段与键：roots = D:\skills;F:\Plugin\.agents\skills
+SKILLS_SECTION = "skills"
+SKILLS_ROOTS_KEY = "roots"
 
 PROMPT_HEADER = "You have access to the following skills:"
 PROMPT_FOOTER = (
@@ -45,13 +52,23 @@ class SkillInfo:
 
 
 class SkillLibrary:
-    """扫描并持有项目根下 `.agents/skills/` 的 Skill 清单。"""
+    """扫描并持有一个或多个技能根目录下的 Skill 清单。
 
-    def __init__(self, project_root: Path | str | None = None) -> None:
+    默认根是 ``<项目根>/.agents/skills/``；多个根按给定顺序扫描，同名 Skill
+    先扫到的生效，后扫到的记入 ``skipped``（并注明已加载的位置）。
+    """
+
+    def __init__(
+        self,
+        project_root: Path | str | None = None,
+        roots: Sequence[Path | str] | None = None,
+    ) -> None:
         # 不传根目录时取「当前进程工作目录」——即程序启动时的工作目录
         root = Path.cwd() if project_root is None else project_root
         self._root = Path(root).expanduser().resolve()
-        self._skills_dir = self._root.joinpath(*SKILLS_DIR_PARTS)
+        if roots is None:
+            roots = resolve_skill_roots(self._root)
+        self._roots = [_absolute(Path(item), self._root) for item in roots]
         self._skills: dict[str, SkillInfo] = {}
         self._skipped: list[dict[str, str]] = []
         self._scan()
@@ -63,8 +80,14 @@ class SkillLibrary:
         return self._root
 
     @property
+    def roots(self) -> list[Path]:
+        """本次扫描过的全部技能根目录（按扫描顺序）。"""
+        return list(self._roots)
+
+    @property
     def skills_dir(self) -> Path:
-        return self._skills_dir
+        """第一个技能根目录（兼容旧调用）。"""
+        return self._roots[0]
 
     @property
     def skills(self) -> list[SkillInfo]:
@@ -140,14 +163,14 @@ class SkillLibrary:
     # ------------------------------------------------------------------ 内部
 
     def _scan(self) -> None:
-        if not self._skills_dir.is_dir():
-            return
-        for entry in sorted(
-            self._skills_dir.iterdir(), key=lambda item: item.name.casefold()
-        ):
-            if entry.name.startswith(".") or not entry.is_dir():
+        for root in self._roots:
+            if not root.is_dir():
+                self._skip(root, "技能根目录不存在")
                 continue
-            self._register(entry)
+            for entry in sorted(root.iterdir(), key=lambda item: item.name.casefold()):
+                if entry.name.startswith(".") or not entry.is_dir():
+                    continue
+                self._register(entry)
 
     def _register(self, directory: Path) -> None:
         skill_md = directory / SKILL_FILE
@@ -172,7 +195,11 @@ class SkillLibrary:
             self._skip(directory, "Frontmatter 缺少必需字段 name/description")
             return
         if name in self._skills:
-            self._skip(directory, "Skill 名称重复：%s" % name)
+            existing = self._skills[name]
+            self._skip(
+                directory,
+                "Skill 名称重复：%s（已加载自 %s）" % (name, existing.directory),
+            )
             return
 
         self._skills[name] = SkillInfo(name, description, directory.resolve())
@@ -190,7 +217,10 @@ class SkillLibrary:
         if raw.is_absolute():
             candidates = [raw]
         else:
-            candidates = [info.directory / raw, self._root / raw]
+            candidates = [info.directory / raw]
+            # 技能根目录与项目根都算「项目相对路径」的基准，按顺序尝试
+            candidates.extend(root / raw for root in self._roots)
+            candidates.append(self._root / raw)
 
         for candidate in candidates:
             resolved = candidate.resolve(strict=False)
@@ -255,7 +285,7 @@ def build_load_skill_tool(library: SkillLibrary) -> ToolSpec:
     return ToolSpec(
         name="loadSkill",
         description=(
-            "按需加载 .agents/skills 目录下某个 Skill 的完整说明。"
+            "按需加载某个 Skill 目录下的完整说明。"
             "System Prompt 里只有技能清单；调用本工具后才会返回 SKILL.md 全文"
             "（或指定的附加文件），内容会进入对话上下文。"
         ),
@@ -401,3 +431,45 @@ def _one_line(description: str) -> str:
     if len(text) > PROMPT_DESCRIPTION_MAX_CHARS:
         text = text[:PROMPT_DESCRIPTION_MAX_CHARS].rstrip() + "…"
     return text
+
+
+# ---------------------------------------------------------------------- 根目录
+
+
+def split_skill_roots(raw: str) -> list[str]:
+    """把 ``roots = a;b`` 这类配置字符串拆成路径列表（``;``、``,`` 或换行分隔）。"""
+    return [piece.strip() for piece in re.split(r"[;,\n]+", raw or "") if piece.strip()]
+
+
+def resolve_skill_roots(
+    project_root: Path | str, configured: Sequence[str] = ()
+) -> list[Path]:
+    """把配置里的技能根目录解析成绝对路径。
+
+    * 空配置时退回默认 ``<项目根>/.agents/skills/``（与旧版行为完全一致）；
+    * 支持 ``;`` / ``,`` 分隔多个根、``~`` 与 ``%环境变量%``；
+    * 相对路径按「程序启动目录」（project_root）解析，换机器不用改代码。
+    """
+    base = Path(project_root).expanduser().resolve()
+    pieces: list[str] = []
+    for raw in configured:
+        pieces.extend(split_skill_roots(str(raw)))
+    if not pieces:
+        return [base.joinpath(*SKILLS_DIR_PARTS)]
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for piece in pieces:
+        path = _absolute(Path(piece), base)
+        if path in seen:
+            continue
+        seen.add(path)
+        roots.append(path)
+    return roots
+
+
+def _absolute(path: Path, base: Path) -> Path:
+    """展开 ``~`` / 环境变量，并把相对路径挂到 base 上。"""
+    expanded = Path(os.path.expandvars(str(path))).expanduser()
+    if not expanded.is_absolute():
+        expanded = base / expanded
+    return expanded.resolve(strict=False)

@@ -20,6 +20,7 @@ from .constants import (
 )
 from .errors import AgentError, ConfigError, ErrorCode
 from .paths import DEFAULT_CONFIG_PATH
+from .skills import SKILLS_ROOTS_KEY, SKILLS_SECTION, split_skill_roots
 
 SECTION = "llm"
 REQUIRED_KEYS = ("base_url", "api_key", "model_name")
@@ -51,6 +52,8 @@ class AppConfig:
     system_prompt: str = SYSTEM_PROMPT
     search_api_key: str = ""
     search_endpoint: str = SEARCH_ENDPOINT
+    # 额外的技能根目录（[skills] roots）；空表示用默认的 <启动目录>/.agents/skills
+    skill_roots: tuple[str, ...] = ()
 
 
 class ConfigStore:
@@ -78,7 +81,8 @@ class ConfigStore:
         if not self._path.is_file():
             raise ConfigError(ErrorCode.CONFIG_MISSING, str(self._path))
 
-        parser = configparser.ConfigParser()
+        # interpolation=None：路径里的 %VAR% 不能被当成 configparser 的插值语法
+        parser = configparser.ConfigParser(interpolation=None)
         try:
             parser.read(self._path, encoding="utf-8")
         except (configparser.Error, UnicodeDecodeError, OSError) as exc:
@@ -104,10 +108,18 @@ class ConfigStore:
             endpoint = parser.get(SEARCH_SECTION, SEARCH_ENDPOINT_KEY, fallback="").strip()
             if endpoint:
                 search_endpoint = endpoint
+        skill_roots: tuple[str, ...] = ()
+        if parser.has_section(SKILLS_SECTION):
+            skill_roots = tuple(
+                split_skill_roots(
+                    parser.get(SKILLS_SECTION, SKILLS_ROOTS_KEY, fallback="")
+                )
+            )
         return AppConfig(
             **values,
             search_api_key=search_api_key,
             search_endpoint=search_endpoint,
+            skill_roots=skill_roots,
             max_tool_rounds=_optional_int(parser, "max_tool_rounds", MAX_TOOL_ROUNDS),
             history_turns=_optional_int(parser, "history_turns", HISTORY_TURNS),
             max_tokens=_optional_int(parser, "max_tokens", MAX_TOKENS),
@@ -130,13 +142,17 @@ class ConfigStore:
                     "配置项“%s”不能为空" % KEY_LABELS[key],
                 )
 
-        parser = configparser.ConfigParser()
+        parser = configparser.ConfigParser(interpolation=None)
         parser[SECTION] = values
         for key, raw in self._read_optional_llm_values().items():
             parser.set(SECTION, key, raw)
         search_section = self._read_search_section()
         if search_section:
             parser[SEARCH_SECTION] = search_section
+        # 技能根目录属于用户环境配置，保存模型设置时原样保留
+        skills_section = self._read_skills_section()
+        if skills_section:
+            parser[SKILLS_SECTION] = skills_section
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with self._path.open("w", encoding="utf-8") as handle:
@@ -147,6 +163,9 @@ class ConfigStore:
             **values,
             search_api_key=search_section.get(SEARCH_KEY, ""),
             search_endpoint=search_section.get(SEARCH_ENDPOINT_KEY, "") or SEARCH_ENDPOINT,
+            skill_roots=tuple(
+                split_skill_roots(skills_section.get(SKILLS_ROOTS_KEY, ""))
+            ),
             max_tool_rounds=int(
                 self._read_optional_llm_values().get(
                     "max_tool_rounds", MAX_TOOL_ROUNDS
@@ -162,6 +181,10 @@ class ConfigStore:
 
     def _read_search_section(self) -> dict[str, str]:
         """读取已有的 ``[search]`` 段；文件损坏时按「没有」处理，不阻塞保存。"""
+        return self._read_section(SEARCH_SECTION)
+
+    def _read_section(self, section: str) -> dict[str, str]:
+        """读取某个段的全部非空键值；文件缺失或损坏时返回空字典。"""
         if not self._path.is_file():
             return {}
         parser = configparser.ConfigParser(interpolation=None)
@@ -169,9 +192,13 @@ class ConfigStore:
             parser.read(self._path, encoding="utf-8")
         except (configparser.Error, UnicodeDecodeError, OSError):
             return {}
-        if not parser.has_section(SEARCH_SECTION):
+        if not parser.has_section(section):
             return {}
-        return {key: value for key, value in parser.items(SEARCH_SECTION) if value.strip()}
+        return {key: value for key, value in parser.items(section) if value.strip()}
+
+    def _read_skills_section(self) -> dict[str, str]:
+        """读取已有的 ``[skills]`` 段；缺文件或损坏时按「没有」处理。"""
+        return self._read_section(SKILLS_SECTION)
 
     def _read_optional_llm_values(self) -> dict[str, str]:
         """读取 ``[llm]`` 里的可选高级设置，保存时原样写回。"""

@@ -6,12 +6,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Sequence
 
 from .config import AppConfig
 from .llm.backend import LlmBackend, OpenAIBackend
 from .paths import DEFAULT_HISTORY_DIR, DEFAULT_WORKSPACE_ROOT
 from .session import AgentSession
-from .skills import SkillLibrary, build_load_skill_tool
+from .skills import SkillLibrary, build_load_skill_tool, resolve_skill_roots
 from .tools.builtins import get_date, is_leap_year
 from .tools.cli import CommandRunner, build_cli_tool
 from .tools.files import FileToolbox
@@ -90,11 +91,13 @@ def create_session(
     registry: ToolRegistry | None = None,
     project_root: Path | str | None = None,
     skills: SkillLibrary | None = None,
+    skill_roots: Sequence[str] | None = None,
 ) -> AgentSession:
     """装配一个可直接驱动的会话；测试可注入 backend / registry / skills。
 
-    ``project_root`` 默认取程序启动时的工作目录，Skill 扫描根（``.agents/skills/``）
-    固定跟随它，不受运行中切换工作区的影响。
+    ``project_root`` 默认取程序启动时的工作目录，Skill 扫描根固定跟随它，不受
+    运行中切换工作区的影响。扫描根默认是 ``<project_root>/.agents/skills/``，也可
+    由 ``config.ini`` 的 ``[skills] roots`` 或 ``skill_roots`` 追加/替换。
     """
     if backend is None:
         backend = OpenAIBackend(
@@ -108,7 +111,10 @@ def create_session(
     )
     # Skill 清单只在初始化时扫描一次；切换工作区重建注册表时复用同一份清单
     if skills is None:
-        skills = SkillLibrary(Path.cwd() if project_root is None else project_root)
+        base = Path.cwd() if project_root is None else project_root
+        # 显式参数优先，其次读配置；都为空时就是默认的 .agents/skills
+        configured = tuple(skill_roots) if skill_roots else tuple(config.skill_roots)
+        skills = SkillLibrary(base, roots=resolve_skill_roots(base, configured))
 
     def registry_factory(root: Path | str) -> ToolRegistry:
         return build_registry(root, search_client=search_client, skills=skills)

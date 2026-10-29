@@ -356,7 +356,7 @@ python Agent\YenaiAgent\main.py
 ```
 
 首次运行若无 `config.ini`，会弹出中文配置页（接口地址 / API 密钥 / 模型名称）；
-也可以直接编辑 `config.ini` 的 `[llm]` 段。联网工具的可选配置：
+也可以直接编辑 `config.ini` 的 `[llm]` 段。联网工具与技能目录的可选配置：
 
 ```ini
 [llm]
@@ -365,9 +365,13 @@ max_tokens = 1024         # 单次回复输出上限（被截断时回答末尾�
 
 [search]                  # searchWeb 联网搜索（百度千帆），缺省则搜索返回“未配置”提示
 baidu_qianfan_api_key = your-key
+
+[skills]                  # 技能根目录（可多个），缺省用 <启动目录>/.agents/skills
+roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
 ```
 
-`fetchWeb` 抓网页不需要配置，依赖系统自带的 `curl`（Windows 10+ 自带）。
+`fetchWeb` 抓网页不需要配置，依赖系统自带的 `curl`（Windows 10+ 自带）；技能目录也可以
+用 `--skills-dir` 或环境变量 `YENAI_SKILLS_DIRS` 临时指定。
 
 ### 分层约定
 
@@ -387,7 +391,7 @@ baidu_qianfan_api_key = your-key
 - 状态栏：就绪 / 思考中（带等待秒数与工具调用次数）/ 工具运行 / 正在中断
 - 输入框：多行编辑，`Enter` 发送，`Ctrl+J` 换行（增强键盘终端也可用 `Shift+Enter`）
 - 快捷键：`Ctrl+Q` 退出，`Ctrl+C` 中断当前回复（空闲时退出），`Ctrl+L` 清屏
-- 命令：`/help` `/clear` `/reset` `/config` `/model` `/workspace` `/exit`
+- 命令：`/help` `/clear` `/reset` `/config` `/model` `/workspace` `/skills` `/exit`
 - 工作区：默认为项目目录，`--workspace` 启动指定或 `/workspace` 运行时切换；
   决定文件工具沙箱与 `RunCli` 的工作目录，切换时保留上下文
 - 稳定性：状态栏每秒显示等待秒数与工具调用次数；模型空响应、请求失败会明确报错，
@@ -398,14 +402,18 @@ baidu_qianfan_api_key = your-key
 按 Agent Skills 规范（`SKILL.md` + YAML frontmatter）实现动态技能加载，自实现解析器，
 不引入第三方依赖：
 
-- 启动时以**程序启动目录**扫描 `.agents/skills/` 下的技能目录，每个子目录的顶层
+- 启动时以**程序启动目录**扫描技能根目录下的技能子目录，每个子目录的顶层
   `SKILL.md` 声明 `name` 与 `description`；初始化只读这两个字段，正文不进上下文。
+- 技能根目录默认是 `<程序启动目录>/.agents/skills/`，可通过 `config.ini` 的
+  `[skills] roots`（`;` 分隔、支持多个根）、`--skills-dir` 或环境变量
+  `YENAI_SKILLS_DIRS` 指向别处；多根按顺序扫描，同名技能先扫到的生效。
 - 技能清单（`- name: description` 列表）注入 System Prompt；模型需要细节时调用
   `loadSkill(name, filename?)`：只给 `name` 返回 `SKILL.md` 全文，给 `filename` 则读取
   技能附带的其他文件（支持相对技能目录 / 相对项目根 / 绝对路径，同名文件列出候选让模型选）。
 - 读取严格限制在该技能目录内，越界路径直接拒绝；缺 `SKILL.md`、缺字段或重名的目录
   自动跳过（`session.skills.skipped` 可查）。
 - `.agents/` 已加入 `.gitignore`；想版本化自己的技能，删掉该行即可。
+- `/skills` 命令可随时查看已加载技能、扫描目录与跳过原因。
 
 完整约定见 [Agent/YenaiAgent/README.md](Agent/YenaiAgent/README.md) 的「技能（Agent Skills）」一节。
 
@@ -417,8 +425,8 @@ python -m pytest tests -q
 ```
 
 覆盖配置读写、上下文裁剪、工具注册表、文件沙箱越界与工作区切换、会话事件流、
-存档格式、Skill 发现与加载、分层约束（core 不得依赖 UI）以及 TUI 无头测试，
-当前 149 个用例。
+存档格式、Skill 发现与加载（含多根扫描与 `[skills]` 配置）、分层约束（core 不得依赖 UI）
+以及 TUI 无头测试，当前 158 个用例。
 
 跑测试先装：`pip install pytest pytest-asyncio`（或 `pip install -r Agent\YenaiAgent\requirements.txt` 一次装齐）。
 
@@ -451,8 +459,7 @@ pip install mcp httpx uvicorn openai textual trafilatura
 | `config.ini` | 各 Agent 的接口地址 / API 密钥 |
 | `config.json` | `Pet/web` 的 AI 接口密钥（明文 Key） |
 | `chat_history/` | 每次运行的对话存档 |
-| `_skills_extract/` | YenaiAgent 解压技能包的临时目录（源 zip 在 `F:\yenaipaim\Plugin`） |
-| `.agents/` | YenaiAgent 的 Agent Skills 本地技能目录（`.agents/skills/`） |
+| `.agents/` | YenaiAgent 的 Agent Skills 本地技能目录（默认 `.agents/skills/`） |
 | `data/` | 临时图片与模板 |
 | `__pycache__/`、`*.py[cod]`、`.pytest_cache/`、`.venv/` | 缓存与虚拟环境 |
 

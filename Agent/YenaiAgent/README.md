@@ -35,8 +35,8 @@ YenaiAgent/
 └── architecture.mmd      # 分层与依赖方向图
 ```
 
-`config.ini`、`chat_history/`、解压技能的 `_skills_extract/`、本地技能目录
-`.agents/` 与各类缓存由**仓库根目录**的 `.gitignore` 统一忽略，不会提交到仓库。
+`config.ini`、`chat_history/`、本地技能目录 `.agents/` 与各类缓存由**仓库根目录**的
+`.gitignore` 统一忽略，不会提交到仓库。
 
 ## 分层契约
 
@@ -58,6 +58,7 @@ YenaiAgent/
 pip install -r requirements.txt
 python main.py            # 或者：python -m tui
 python main.py --workspace F:\your\project    # 启动时指定工作区（默认本项目目录）
+python main.py --skills-dir D:\my-skills       # 额外技能根目录（可重复）
 ```
 
 首次启动没有 `config.ini` 时，会弹出中文配置页，填写：
@@ -111,6 +112,7 @@ baidu_qianfan_api_key = your-baidu-key
   - `/reset` 清空上下文并换新存档
   - `/model` 查看当前模型；`/model 名称` 切换模型（保留上下文，同时写回 config.ini）
   - `/workspace` 查看当前工作区；`/workspace 目录` 切换工作区（保留上下文）
+  - `/skills` 查看已加载的 Agent Skills 技能、扫描目录与跳过原因
   - `/config` 重新打开配置页（保存后换新会话）
   - `/exit` 退出
 
@@ -223,8 +225,25 @@ baidu_qianfan_api_key = your-baidu-key
 
 ## 技能（Agent Skills）
 
-启动时按 **程序启动目录**（不是工作区）扫描 `.agents/skills/` 下的技能目录，
-扫描只进行一次；运行中 `/workspace` 切换工作区不会改变技能清单。
+启动时按 **程序启动目录**（不是工作区）扫描技能根目录下的技能子目录，扫描只进行一次；
+运行中 `/workspace` 切换工作区不会改变技能清单；随时可用 `/skills` 查看扫描目录、
+已加载技能与跳过原因。
+
+技能根目录默认是 `<程序启动目录>/.agents/skills/`，也可以指向别处（支持多个根，
+按顺序扫描，同名技能先扫到的生效）：
+
+```ini
+# config.ini
+[skills]
+roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
+```
+
+- 多个根用 `;` 或 `,` 分隔，支持 `~` 与 `%环境变量%`；相对路径按程序启动目录解析，
+  换机器、换目录都不用改代码。
+- 也可用 `--skills-dir 路径`（可重复）或环境变量 `YENAI_SKILLS_DIRS="a;b"`
+  临时指定；优先级：命令行 > 环境变量 > `config.ini`。
+- `config.ini` 不进版本库：技能根目录属于「本机环境」配置，保存模型设置时该段原样保留。
+- 某次扫描目录不存在时不会报错，会在 `/skills` 里提示「技能根目录不存在」。
 
 - 每个技能是一个子目录，内含顶层 `SKILL.md`；frontmatter 里声明 `name` 与
   `description`（其余字段忽略），示例：
@@ -257,14 +276,15 @@ baidu_qianfan_api_key = your-baidu-key
 
 ```bash
 pip install -r requirements.txt   # 运行依赖与测试依赖都在这一份里
-pytest tests -q          # 当前 149 个用例，约 11 秒
+pytest tests -q          # 当前 158 个用例，约 12 秒
 ```
 
 - 网络完全用 `tests/support.py` 里的 `FakeBackend` 脚本化替身，不发起真实请求；
   搜索与抓取工具也通过注入假 transport / 假 curl 测试，跑测试不需要联网。
 - `tests/test_layers.py` 校验分层：`core` 不得 import `textual/rich/tui`，也不得做进程级 IO。
 - `tests/test_skills.py` 覆盖技能发现与跳过规则、frontmatter 解析、清单注入与
-  `loadSkill` 的路径解析 / 沙箱拒绝场景。
+  `loadSkill` 的路径解析 / 沙箱拒绝场景，以及多根扫描、重名去重与 `[skills]`
+  配置解析。
 - TUI 用 Textual 的 `run_test` 无头驱动，覆盖流式渲染、消息卡片与工具卡片（含耗时、
   参数/结果分节、点击折叠）、错误提示、命令、首次配置页，以及「回复必须逐块出现」
   的流式回归测试（慢速后端断言中间态）。
@@ -280,8 +300,9 @@ pytest tests -q          # 当前 149 个用例，约 11 秒
 - 只有成功的问答才写入上下文和存档；失败与中断不会污染历史。
 - 存档文件在首次成功问答时创建（旧版启动即创建，可能留下空文件）。
 - 日期工具改为纯 Python 实现，输出格式保持 `YYYY-MM-DD HH:MM:SS 星期X（UTC+0800）`。
-- 新增 Agent Skills：`.agents/skills/` 里的技能按 `SKILL.md` frontmatter 自动登记，
-  清单进 System Prompt，正文按需经 `loadSkill` 加载（Practice02 没有的能力）。
+- 新增 Agent Skills：技能目录（默认 `.agents/skills/`，可配置多个根）里的技能按
+  `SKILL.md` frontmatter 自动登记，清单进 System Prompt，正文按需经 `loadSkill`
+  加载（Practice02 没有的能力）。
 - 工具从 13 个扩展到 16 个：新增 `searchWeb`（联网搜索）、`fetchWeb`（抓网页）、
   `RunCli`（执行本地命令行），仍然全部通过注册表统一描述、执行与错误归一。
 
