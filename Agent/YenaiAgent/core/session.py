@@ -29,6 +29,7 @@ from .events import (
 from .llm.backend import LlmBackend
 from .llm.collector import TurnCollector
 from .llm.types import LlmRequest
+from .skills import SkillLibrary
 from .tools.spec import ToolRegistry
 from .transcript import Transcript
 
@@ -64,6 +65,7 @@ class AgentSession:
         config: AppConfig,
         transcript: Transcript | None = None,
         registry_factory: Callable[[Path | str], ToolRegistry] | None = None,
+        skills: SkillLibrary | None = None,
     ) -> None:
         self._backend = backend
         self._registry = registry
@@ -71,6 +73,8 @@ class AgentSession:
         self._transcript = transcript
         # 由装配点注入：换工作区时按新目录重建工具注册表
         self._registry_factory = registry_factory
+        # 技能清单：名字与描述注入 System Prompt，全文只在 loadSkill 被调用时进入上下文
+        self._skills = skills
         self._history: list[dict[str, Any]] = []
 
     @property
@@ -84,6 +88,10 @@ class AgentSession:
     @property
     def history(self) -> list[dict[str, Any]]:
         return list(self._history)
+
+    @property
+    def skills(self) -> SkillLibrary | None:
+        return self._skills
 
     @property
     def transcript_path(self):
@@ -130,7 +138,9 @@ class AgentSession:
         """
         yield TurnStarted(question)
 
-        messages = build_messages(self._history, question, self._config)
+        messages = build_messages(
+            self._history, question, self._config, self._skills_prompt()
+        )
         parts: list[str] = []
         records: list[ToolCallRecord] = []
         rounds = 0
@@ -261,6 +271,12 @@ class AgentSession:
             text += _truncated_note(self._config.max_tokens)
         self._commit(question, text, records)
         yield TurnCompleted(text, tuple(records))
+
+    def _skills_prompt(self) -> str:
+        """注入 System Prompt 的技能清单；没有 Skill 时为空串。"""
+        if self._skills is None:
+            return ""
+        return self._skills.prompt_block()
 
     def _commit(
         self,

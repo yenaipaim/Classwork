@@ -19,6 +19,7 @@ from .events import (
 )
 from .factory import build_registry, create_session
 from .session import AgentSession, CancelToken
+from .skills import SkillInfo, SkillLibrary
 
 __all__ = [
     "AgentError",
@@ -30,6 +31,8 @@ __all__ = [
     "ConfigStore",
     "ErrorCode",
     "LlmRequestError",
+    "SkillInfo",
+    "SkillLibrary",
     "TextDelta",
     "ToolCallFinished",
     "ToolCallRecord",

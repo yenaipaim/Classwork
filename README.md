@@ -26,7 +26,7 @@ Anything/
 | [LLM_UPLOAD_MCP/](LLM_UPLOAD_MCP/README.md) | 第 3 次 | 文档上传 & 嵌入 AnythingLLM 的网页 | 浏览器直接打开 `index.html` |
 | [Agent/Practice01/](Agent/Practice01/README.md) | 第 4 次 | 多轮对话 CLI（流式输出 · 终端转圈动画） | `python main.py` |
 | [Agent/Practice02/](Agent/Practice02/README.md) | 第 5 次 | 多轮对话 CLI + 13 个工具（含 10 个本地文件操作） | `python Agent\Practice02\main.py` |
-| [Agent/YenaiAgent/](Agent/YenaiAgent/README.md) | 第 6 次 | 把 Practice02 拆成 core + tui：Textual 终端界面、消息卡片、配置页 | `python Agent\YenaiAgent\main.py` |
+| [Agent/YenaiAgent/](Agent/YenaiAgent/README.md) | 第 6-7 次 | core + tui 分层：Textual 界面、16 个工具、可切换工作区 | `python Agent\YenaiAgent\main.py` |
 
 ---
 
@@ -106,6 +106,9 @@ python Pet\web\server.py
 |------|------|
 | `Pet/web/config.json` | AI 接口（`baseUrl` / `apiKey` / `model`）与已启用的 MCP 工具列表 |
 
+> `config.json` 含明文 API Key，**已退出版本库跟踪**（`.gitignore` 忽略），仓库不再分发该文件；
+> 文件缺失时服务用内置默认值正常启动，在网页「设置」页填写后会在本地生成。
+
 环境变量（可选）：
 
 | 变量 | 默认值 | 说明 |
@@ -155,6 +158,7 @@ python LLM_MCP\server.py
 - **工具**：`query_mods(question)` — 向 AnythingLLM 的 `mods` 工作区提问，返回基于文档的 AI 回答
 - **依赖**：本地运行的 AnythingLLM（默认 `http://localhost:3001`）
 - **传输**：Streamable HTTP
+- ⚠️ 演示用的 AnythingLLM Key 写死在 `server.py` 源码里，仅供本地课程实验，不要复用；长期使用应改读环境变量
 
 ---
 
@@ -352,7 +356,18 @@ python Agent\YenaiAgent\main.py
 ```
 
 首次运行若无 `config.ini`，会弹出中文配置页（接口地址 / API 密钥 / 模型名称）；
-也可以直接编辑 `config.ini` 的 `[llm]` 段。
+也可以直接编辑 `config.ini` 的 `[llm]` 段。联网工具的可选配置：
+
+```ini
+[llm]
+max_tool_rounds = 25      # 单轮工具调用轮数上限（默认 25，触顶保留结果不报错）
+max_tokens = 1024         # 单次回复输出上限（被截断时回答末尾会提示）
+
+[search]                  # searchWeb 联网搜索（百度千帆），缺省则搜索返回“未配置”提示
+baidu_qianfan_api_key = your-key
+```
+
+`fetchWeb` 抓网页不需要配置，依赖系统自带的 `curl`（Windows 10+ 自带）。
 
 ### 分层约定
 
@@ -369,12 +384,14 @@ python Agent\YenaiAgent\main.py
 
 - 消息卡片：用户橙色左边条、助手蓝色左边条，正文与角色标签分行
 - 工具调用卡片：`工具名(参数)`、✓/✗ 状态、耗时 ms、「参数」「结果」分节
-- 状态栏：就绪 / 思考中 / 工具运行 / 取消
+- 状态栏：就绪 / 思考中（带等待秒数与工具调用次数）/ 工具运行 / 正在中断
 - 输入框：多行编辑，`Enter` 发送，`Ctrl+J` 换行（增强键盘终端也可用 `Shift+Enter`）
 - 快捷键：`Ctrl+Q` 退出，`Ctrl+C` 中断当前回复（空闲时退出），`Ctrl+L` 清屏
 - 命令：`/help` `/clear` `/reset` `/config` `/model` `/workspace` `/exit`
 - 工作区：默认为项目目录，`--workspace` 启动指定或 `/workspace` 运行时切换；
   决定文件工具沙箱与 `RunCli` 的工作目录，切换时保留上下文
+- 稳定性：状态栏每秒显示等待秒数与工具调用次数；模型空响应、请求失败会明确报错，
+  不会静默卡住；`Ctrl+C` 中断（正在执行的工具最长再等约 30 秒）
 
 ### 测试
 
@@ -385,6 +402,8 @@ python -m pytest tests -q
 
 覆盖配置读写、上下文裁剪、工具注册表、文件沙箱越界与工作区切换、会话事件流、
 存档格式、分层约束（core 不得依赖 UI）以及 TUI 无头测试，当前 123 个用例。
+
+跑测试先装：`pip install pytest pytest-asyncio`（或 `pip install -r Agent\YenaiAgent\requirements.txt` 一次装齐）。
 
 ---
 

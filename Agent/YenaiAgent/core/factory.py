@@ -11,6 +11,7 @@ from .config import AppConfig
 from .llm.backend import LlmBackend, OpenAIBackend
 from .paths import DEFAULT_HISTORY_DIR, DEFAULT_WORKSPACE_ROOT
 from .session import AgentSession
+from .skills import SkillLibrary, build_load_skill_tool
 from .tools.builtins import get_date, is_leap_year
 from .tools.cli import CommandRunner, build_cli_tool
 from .tools.files import FileToolbox
@@ -26,8 +27,12 @@ def build_registry(
     search_client: SearchClient | None = None,
     fetcher: WebFetcher | None = None,
     cli_runner: CommandRunner | None = None,
+    skills: SkillLibrary | None = None,
 ) -> ToolRegistry:
-    """按旧版顺序注册文件/计算工具，末尾追加联网、网页、命令行与工具清单。"""
+    """按旧版顺序注册文件/计算工具，末尾追加联网、网页、命令行、技能与工具清单。
+
+    ``skills`` 非空时追加 ``loadSkill`` 工具；为空或未传时注册表与旧版完全一致。
+    """
     registry = ToolRegistry()
     registry.register(
         ToolSpec(
@@ -63,6 +68,8 @@ def build_registry(
             else CommandRunner(cwd=str(workspace_root))
         )
     )
+    if skills:
+        registry.register(build_load_skill_tool(skills))
     registry.register(
         ToolSpec(
             name="list_tools",
@@ -81,8 +88,14 @@ def create_session(
     history_dir: Path | str = DEFAULT_HISTORY_DIR,
     backend: LlmBackend | None = None,
     registry: ToolRegistry | None = None,
+    project_root: Path | str | None = None,
+    skills: SkillLibrary | None = None,
 ) -> AgentSession:
-    """装配一个可直接驱动的会话；测试可注入 backend / registry。"""
+    """装配一个可直接驱动的会话；测试可注入 backend / registry / skills。
+
+    ``project_root`` 默认取程序启动时的工作目录，Skill 扫描根（``.agents/skills/``）
+    固定跟随它，不受运行中切换工作区的影响。
+    """
     if backend is None:
         backend = OpenAIBackend(
             config.base_url, config.api_key, config.request_timeout
@@ -93,15 +106,23 @@ def create_session(
     search_client = SearchClient(
         config.search_api_key, endpoint=config.search_endpoint
     )
+    # Skill 清单只在初始化时扫描一次；切换工作区重建注册表时复用同一份清单
+    if skills is None:
+        skills = SkillLibrary(Path.cwd() if project_root is None else project_root)
 
     def registry_factory(root: Path | str) -> ToolRegistry:
-        return build_registry(root, search_client=search_client)
+        return build_registry(root, search_client=search_client, skills=skills)
 
     if registry is None:
         registry = registry_factory(workspace_root)
     transcript = Transcript(history_dir, config.model_name)
     return AgentSession(
-        backend, registry, config, transcript, registry_factory=registry_factory
+        backend,
+        registry,
+        config,
+        transcript,
+        registry_factory=registry_factory,
+        skills=skills,
     )
 
 
