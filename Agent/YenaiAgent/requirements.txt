@@ -1,3 +1,8 @@
+# 运行与测试依赖：pip install -r requirements.txt
 openai>=1.0,<4
 textual>=8.2,<9
 trafilatura>=2.0,<3
+
+# 跑测试才用到的（已一并列出，避免维护两份清单）
+pytest>=8
+pytest-asyncio>=0.23

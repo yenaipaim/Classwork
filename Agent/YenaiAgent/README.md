@@ -30,8 +30,7 @@ YenaiAgent/
 ├── tests/                # 无网络测试：FakeBackend + Textual run_test
 ├── main.py               # python main.py
 ├── pyproject.toml        # 打包、入口点、pytest 配置
-├── requirements.txt      # 运行依赖（openai、textual）
-├── requirements-dev.txt  # 开发依赖（pytest、pytest-asyncio）
+├── requirements.txt      # 依赖清单（运行 + 测试，装这一份即可）
 └── architecture.mmd      # 分层与依赖方向图
 ```
 
@@ -207,8 +206,8 @@ baidu_qianfan_api_key = your-baidu-key
 ## 开发与测试
 
 ```bash
-pip install -r requirements-dev.txt
-pytest tests -q          # 当前 108 个用例，约 7 秒
+pip install -r requirements.txt   # 运行依赖与测试依赖都在这一份里
+pytest tests -q          # 当前 116 个用例，约 10 秒
 ```
 
 - 网络完全用 `tests/support.py` 里的 `FakeBackend` 脚本化替身，不发起真实请求；
