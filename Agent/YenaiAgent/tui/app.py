@@ -46,8 +46,9 @@ from .i18n import (
     MODEL_USAGE,
     NEED_CONFIG,
     READY,
+    STATUS_THINKING_ELAPSED,
+    STATUS_TOOL_RUNNING,
     THINKING,
-    TOOL_RUNNING,
     UNKNOWN_COMMAND,
     WELCOME,
     describe_error,
@@ -94,8 +95,13 @@ class YenaiApp(App[None]):
         self._cancel = CancelToken()
         self._worker = None
         self._turn_busy = False
+        self._cancelling = False
         self._stream_parts: list[str] = []
         self._flush_timer: Timer | None = None
+        self._status_timer: Timer | None = None
+        self._turn_started = 0.0
+        self._tool_calls = 0
+        self._current_tool: str | None = None
         self._tool_starts: dict[str, list[float]] = {}
 
     # ---------------------------------------------------------------- 布局
@@ -230,11 +236,17 @@ class YenaiApp(App[None]):
             return
 
         self._turn_busy = True
+        self._cancelling = False
         self._cancel.reset()
         self._stream_parts = []
+        self._tool_calls = 0
+        self._current_tool = None
+        self._turn_started = time.monotonic()
         self._chat.add_user(question)
         self._status.update(THINKING)
         self._prompt.read_only = True
+        # 每秒刷新一次状态栏：等待时间和工具次数让用户知道程序没卡死
+        self._status_timer = self.set_interval(1.0, self._tick_status)
         self._worker = self._run_turn(question)
 
     # ---------------------------------------------------------------- 后台
@@ -254,8 +266,12 @@ class YenaiApp(App[None]):
         elif isinstance(event, ToolCallStarted):
             self._flush()
             self._chat.finish_assistant()
+            self._tool_calls += 1
+            self._current_tool = event.name
             self._tool_starts.setdefault(event.name, []).append(time.monotonic())
-            self._status.update("%s：%s" % (TOOL_RUNNING, event.name))
+            self._status.update(
+                STATUS_TOOL_RUNNING % (event.name, 0, self._tool_calls)
+            )
         elif isinstance(event, ToolCallFinished):
             starts = self._tool_starts.get(event.name) or []
             elapsed = 0.0
@@ -268,6 +284,7 @@ class YenaiApp(App[None]):
                 event.ok,
                 int(round(elapsed * 1000)),
             )
+            self._current_tool = None
             self._status.update(THINKING)
         elif isinstance(event, TurnCompleted):
             self._flush()
@@ -295,12 +312,32 @@ class YenaiApp(App[None]):
         if self._stream_parts:
             self._chat.set_stream("".join(self._stream_parts))
 
+    def _tick_status(self) -> None:
+        """每秒刷新状态栏，展示已等待的秒数与工具次数。"""
+        if not self._turn_busy or self._cancelling:
+            return
+        elapsed = int(time.monotonic() - self._turn_started)
+        if self._current_tool is not None:
+            self._status.update(
+                STATUS_TOOL_RUNNING
+                % (self._current_tool, elapsed, self._tool_calls)
+            )
+        else:
+            self._status.update(
+                STATUS_THINKING_ELAPSED % (elapsed, self._tool_calls)
+            )
+
     def _finish_turn(self) -> None:
         if self._flush_timer is not None:
             self._flush_timer.stop()
             self._flush_timer = None
+        if self._status_timer is not None:
+            self._status_timer.stop()
+            self._status_timer = None
         self._stream_parts = []
         self._turn_busy = False
+        self._cancelling = False
+        self._current_tool = None
         self._prompt.read_only = False
         self._status.update(READY)
         self._prompt.focus()
@@ -310,6 +347,7 @@ class YenaiApp(App[None]):
     def action_interrupt(self) -> None:
         if self._turn_busy:
             self._cancel.cancel()
+            self._cancelling = True
             self._status.update(CANCELLING)
         else:
             self.exit()

@@ -177,6 +177,35 @@ async def test_tool_card_renders_call_details(make_session, tmp_path) -> None:
         assert _plain(card.query_one(".tool-arrow")).strip() == "▶"
 
 
+class _SlowBackend:
+    """故意拖延几秒才给出内容，用来观察状态栏的等待计时。"""
+
+    def __init__(self, seconds: float = 3.0) -> None:
+        self.seconds = seconds
+
+    def stream(self, request):
+        def generate():
+            time.sleep(self.seconds)
+            yield LlmChunk(content="好")
+
+        return generate()
+
+
+async def test_status_shows_elapsed_time_while_waiting(make_session, tmp_path) -> None:
+    """忙碌时状态栏每秒刷新等待秒数，让用户知道程序还活着。"""
+    app = make_app(make_session(_SlowBackend(3.0)), tmp_path)
+
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "hi")
+        await pilot.pause(1.4)
+
+        status = str(app._status.content)
+        assert "思考中" in status
+        assert "秒" in status
+
+        await wait_idle(app, pilot, timeout=10.0)
+
+
 async def test_request_error_is_rendered(make_session, tmp_path) -> None:
     session = make_session(RaisingBackend(LlmRequestError(ErrorCode.REQUEST_FAILED, "boom")))
     app = make_app(session, tmp_path)

@@ -20,8 +20,11 @@ WELCOME = "输入问题开始对话（Enter 发送，Ctrl+J 换行）；/help �
 INPUT_PLACEHOLDER = "输入问题：Enter 发送，Ctrl+J 换行（可粘贴多行文本）"
 READY = "就绪"
 THINKING = "思考中…"
-CANCELLING = "正在中断…"
+CANCELLING = "正在中断…（等当前工具结束，最长约 30 秒）"
 TOOL_RUNNING = "调用工具"
+# 等待时间与工具次数让用户能判断“还活着”而不是卡死
+STATUS_THINKING_ELAPSED = "思考中… %d 秒（已调用工具 %d 次）"
+STATUS_TOOL_RUNNING = "调用工具：%s · 已 %d 秒（第 %d 次）"
 
 CANCELLED = "已中断，本轮内容不计入上下文。"
 CONTEXT_CLEARED = "上下文已清空，下一轮从新对话开始。"
@@ -45,17 +48,29 @@ HELP_TEXT = """可用命令：
 _ERROR_TEMPLATES = {
     ErrorCode.CONFIG_MISSING: "缺少配置文件：%s",
     ErrorCode.CONFIG_INVALID: "配置错误：%s",
-    ErrorCode.REQUEST_FAILED: "额度已经耗尽或者配置信息错误",
+    ErrorCode.REQUEST_FAILED: "请求失败：%s",
     ErrorCode.TOOL_ROUND_LIMIT: "工具调用次数过多，本轮已中止。",
     ErrorCode.INTERRUPTED: "请求已中断。",
-    ErrorCode.UNKNOWN: "发生未知错误：%s",
+    ErrorCode.UNKNOWN: "%s",
 }
+
+# 异常详情可能带整段响应体，太长反而看不清
+_MAX_DETAIL = 300
+
+
+def _shorten(detail: str) -> str:
+    detail = " ".join(detail.split())
+    if len(detail) > _MAX_DETAIL:
+        return detail[:_MAX_DETAIL] + "…"
+    return detail
 
 
 def describe_error(error: AgentError) -> str:
     """把 core 的错误翻译成一句用户能看懂的话。"""
     template = _ERROR_TEMPLATES.get(error.code, _ERROR_TEMPLATES[ErrorCode.UNKNOWN])
-    detail = getattr(error, "detail", "") or ""
+    detail = _shorten(getattr(error, "detail", "") or "")
     if "%s" in template:
+        if error.code is ErrorCode.REQUEST_FAILED and not detail:
+            detail = "额度不足、网络异常或接口返回错误，请稍后重试"
         return template % (detail or "未知原因")
     return template

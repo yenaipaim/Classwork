@@ -76,4 +76,13 @@ def _to_chunk(chunk) -> LlmChunk:
     return LlmChunk(
         content=getattr(delta, "content", None),
         tool_calls=tuple(calls),
+        finish_reason=_finish_reason(chunk),
     )
+
+
+def _finish_reason(chunk: Any) -> str | None:
+    """读取结束原因；不同兼容接口字段位置可能不同，缺失时返回 None。"""
+    choices = getattr(chunk, "choices", None) or ()
+    if not choices:
+        return None
+    return getattr(choices[0], "finish_reason", None)

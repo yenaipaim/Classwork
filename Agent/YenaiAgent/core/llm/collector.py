@@ -33,12 +33,15 @@ class TurnCollector:
     def __init__(self) -> None:
         self._parts: list[str] = []
         self._calls: dict[int, _PendingCall] = {}
+        self.finish_reason: str | None = None
 
     @property
     def text(self) -> str:
         return "".join(self._parts)
 
     def add_chunk(self, chunk: LlmChunk) -> None:
+        if chunk.finish_reason:
+            self.finish_reason = chunk.finish_reason
         if chunk.content:
             self._parts.append(chunk.content)
         for delta in chunk.tool_calls:

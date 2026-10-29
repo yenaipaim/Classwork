@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from core.config import ConfigStore
+from core.constants import HISTORY_TURNS, MAX_TOOL_ROUNDS
 from core.errors import ConfigError, ErrorCode
 
 
@@ -87,6 +88,60 @@ def test_load_without_search_section_uses_default_endpoint(tmp_path: Path) -> No
 
     assert config.search_api_key == ""
     assert config.search_endpoint.startswith("https://qianfan.baidubce.com/")
+
+
+def test_load_reads_optional_tool_rounds(tmp_path: Path) -> None:
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\nbase_url = http://x\napi_key = k\nmodel_name = m\n"
+        "max_tool_rounds = 7\nhistory_turns = 4\n",
+        encoding="utf-8",
+    )
+
+    config = ConfigStore(path).load()
+
+    assert config.max_tool_rounds == 7
+    assert config.history_turns == 4
+
+
+def test_load_defaults_tool_rounds_when_absent(tmp_path: Path) -> None:
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\nbase_url = http://x\napi_key = k\nmodel_name = m\n", encoding="utf-8"
+    )
+
+    config = ConfigStore(path).load()
+
+    assert config.max_tool_rounds == MAX_TOOL_ROUNDS
+    assert config.history_turns == HISTORY_TURNS
+
+
+def test_save_preserves_optional_tool_rounds(tmp_path: Path) -> None:
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\nbase_url = http://old\napi_key = old\nmodel_name = old\n"
+        "max_tool_rounds = 9\n",
+        encoding="utf-8",
+    )
+    store = ConfigStore(path)
+
+    saved = store.save("http://example.test/v1", "secret", "model")
+
+    assert saved.max_tool_rounds == 9
+    assert store.load().max_tool_rounds == 9
+
+
+def test_load_rejects_non_numeric_tool_rounds(tmp_path: Path) -> None:
+    path = tmp_path / "config.ini"
+    path.write_text(
+        "[llm]\nbase_url = http://x\napi_key = k\nmodel_name = m\n"
+        "max_tool_rounds = many\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as excinfo:
+        ConfigStore(path).load()
+    assert "max_tool_rounds" in excinfo.value.detail
 
 
 def test_save_preserves_search_section(tmp_path: Path) -> None:

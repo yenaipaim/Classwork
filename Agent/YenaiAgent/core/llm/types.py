@@ -29,7 +29,8 @@ class ToolCallDelta:
 
 @dataclass(frozen=True, slots=True)
 class LlmChunk:
-    """流式响应的一个分片：正文和/或工具调用分片。"""
+    """流式响应的一个分片：正文、工具调用分片，以及结束原因。"""
 
     content: str | None = None
     tool_calls: tuple[ToolCallDelta, ...] = ()
+    finish_reason: str | None = None

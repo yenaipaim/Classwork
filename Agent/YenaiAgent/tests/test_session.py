@@ -167,7 +167,7 @@ def test_cancel_mid_stream_keeps_partial_text(make_session) -> None:
     assert session.history == []
 
 
-def test_tool_round_limit(make_session) -> None:
+def test_tool_round_limit_finishes_gracefully(make_session) -> None:
     config = AppConfig(
         base_url="http://x", api_key="k", model_name="m", max_tool_rounds=1
     )
@@ -182,10 +182,57 @@ def test_tool_round_limit(make_session) -> None:
 
     events = collect(session, "现在几点")
 
+    done = events[-1]
+    assert isinstance(done, TurnCompleted)
+    assert "达到上限" in done.text
+    assert len(done.tool_calls) == 1
+    # 结果保留下来，用户可以接着追问
+    assert [item["role"] for item in session.history] == ["user", "assistant"]
+
+
+def test_repeated_identical_tool_calls_stop_gracefully(make_session) -> None:
+    """模型用同样的参数反复调同一个工具时及时停下，而不是空转到上限。"""
+    config = AppConfig(
+        base_url="http://x", api_key="k", model_name="m", max_tool_rounds=10
+    )
+    scripts = [tool_script("call-%d" % i, "get_date", "{}") for i in range(4)]
+    scripts.append(text_chunks("永远不会到这"))
+    session = make_session(FakeBackend(scripts), config=config)
+
+    events = collect(session, "几点了")
+
+    done = events[-1]
+    assert isinstance(done, TurnCompleted)
+    assert "反复以相同参数调用" in done.text
+    executed = [event for event in events if isinstance(event, ToolCallFinished)]
+    assert len(executed) == 3  # 第 4 次在真正执行前就被拦下
+    assert len(session.history) == 2
+
+
+def test_empty_response_is_reported(make_session) -> None:
+    """流结束了却没有任何内容时明确报错，而不是静默停在“思考中”。"""
+    session = make_session(FakeBackend([[]]))
+
+    events = collect(session, "hi")
+
     failed = events[-1]
     assert isinstance(failed, TurnFailed)
-    assert failed.error.code is ErrorCode.TOOL_ROUND_LIMIT
+    assert "没有返回任何内容" in failed.error.detail
     assert session.history == []
+
+
+def test_truncated_reply_is_flagged(make_session) -> None:
+    """模型被输出上限截断时在回答末尾说明，避免用户以为回答就这么短。"""
+    session = make_session(
+        FakeBackend([[LlmChunk(content="开头部分", finish_reason="length")]])
+    )
+
+    events = collect(session, "写一段长文")
+
+    done = events[-1]
+    assert isinstance(done, TurnCompleted)
+    assert done.text.startswith("开头部分")
+    assert "输出上限" in done.text
 
 
 def test_unknown_tool_returns_failure_json(make_session) -> None:

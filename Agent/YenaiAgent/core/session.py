@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Iterator
 
 from .config import AppConfig
+from .constants import MAX_REPEATED_TOOL_CALLS
 from .context import build_messages
 from .errors import AgentError, ErrorCode, LlmRequestError
 from .events import (
@@ -108,6 +109,8 @@ class AgentSession:
         parts: list[str] = []
         records: list[ToolCallRecord] = []
         rounds = 0
+        # 同一工具 + 同一组参数的连续调用次数，用来发现原地打转
+        repeats: dict[tuple[str, str], int] = {}
 
         while True:
             if cancel is not None and cancel.cancelled:
@@ -148,17 +151,26 @@ class AgentSession:
                 )
                 return
 
+            if not collector.text.strip() and not collector.has_tool_calls:
+                # 流结束了却什么都没有：多半是连接被掐断或模型空回复。
+                # 静默结束会让界面停在“思考中”，所以明确报错让用户重试。
+                yield TurnFailed(
+                    AgentError(
+                        ErrorCode.UNKNOWN,
+                        "模型没有返回任何内容（连接可能中断或模型异常），请重试。",
+                    ),
+                    "".join(parts),
+                )
+                return
+
             if not collector.has_tool_calls:
                 break
 
             if rounds >= self._config.max_tool_rounds:
-                yield TurnFailed(
-                    AgentError(
-                        ErrorCode.TOOL_ROUND_LIMIT,
-                        "工具调用超过 %d 次，已中止" % self._config.max_tool_rounds,
-                    ),
-                    "".join(parts),
-                )
+                # 不再报错中止：保留已经拿到的回答，让用户可以继续追问。
+                text = "".join(parts) + _round_limit_note(self._config.max_tool_rounds)
+                self._commit(question, text, records)
+                yield TurnCompleted(text, tuple(records))
                 return
             rounds += 1
 
@@ -186,6 +198,15 @@ class AgentSession:
                     yield TurnCancelled("".join(parts))
                     return
 
+                signature = (call.name, call.arguments)
+                repeats[signature] = repeats.get(signature, 0) + 1
+                if repeats[signature] > MAX_REPEATED_TOOL_CALLS:
+                    # 模型在用同样的参数反复调同一个工具，再跑下去只是空转
+                    text = "".join(parts) + _repeat_note(call.name)
+                    self._commit(question, text, records)
+                    yield TurnCompleted(text, tuple(records))
+                    return
+
                 yield ToolCallStarted(call.name, call.arguments, call.call_id)
                 started_at = datetime.now().strftime("%H:%M:%S")
                 outcome = self._registry.execute(call.name, call.arguments)
@@ -210,8 +231,41 @@ class AgentSession:
                 )
 
         text = "".join(parts)
+        if collector.finish_reason == "length":
+            # 模型被单次输出上限截断：明确告诉用户，而不是让回答莫名其妙停在半句
+            text += _truncated_note(self._config.max_tokens)
+        self._commit(question, text, records)
+        yield TurnCompleted(text, tuple(records))
+
+    def _commit(
+        self,
+        question: str,
+        text: str,
+        records: list[ToolCallRecord],
+    ) -> None:
+        """把一轮问答写入上下文与存档（失败和中断不走这里）。"""
         self._history.append({"role": "user", "content": question})
         self._history.append({"role": "assistant", "content": text})
         if self._transcript is not None:
             self._transcript.save_turn(question, text, records)
-        yield TurnCompleted(text, tuple(records))
+
+
+def _round_limit_note(limit: int) -> str:
+    return (
+        "\n\n（本轮已连续调用工具 %d 轮，达到上限；上面的结果已保留，"
+        "可以继续追问，或让我换个方式处理。）" % limit
+    )
+
+
+def _repeat_note(name: str) -> str:
+    return (
+        "\n\n（工具「%s」被反复以相同参数调用，已停止以免空转；"
+        "可以换个说法，或告诉我需要什么信息。）" % name
+    )
+
+
+def _truncated_note(max_tokens: int) -> str:
+    return (
+        "\n\n（本次回答达到单次输出上限 %d tokens，后面被截断了；"
+        "回复“继续”即可接着写，或在 config.ini 里调大 max_tokens。）" % max_tokens
+    )

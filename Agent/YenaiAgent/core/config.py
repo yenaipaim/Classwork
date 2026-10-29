@@ -30,7 +30,8 @@ KEY_LABELS = {
     "model_name": "模型名称",
 }
 
-# 网络搜索是可选配置：没有这一节时搜索工具仍会注册，只是调用时提示未配置
+# 可选的高级设置：不写就用 constants 里的默认值
+OPTIONAL_INT_KEYS = ("max_tool_rounds", "history_turns", "max_tokens")
 SEARCH_SECTION = "search"
 SEARCH_KEY = "baidu_qianfan_api_key"
 SEARCH_ENDPOINT_KEY = "endpoint"
@@ -107,6 +108,9 @@ class ConfigStore:
             **values,
             search_api_key=search_api_key,
             search_endpoint=search_endpoint,
+            max_tool_rounds=_optional_int(parser, "max_tool_rounds", MAX_TOOL_ROUNDS),
+            history_turns=_optional_int(parser, "history_turns", HISTORY_TURNS),
+            max_tokens=_optional_int(parser, "max_tokens", MAX_TOKENS),
         )
 
     def save(self, base_url: str, api_key: str, model_name: str) -> AppConfig:
@@ -128,6 +132,8 @@ class ConfigStore:
 
         parser = configparser.ConfigParser()
         parser[SECTION] = values
+        for key, raw in self._read_optional_llm_values().items():
+            parser.set(SECTION, key, raw)
         search_section = self._read_search_section()
         if search_section:
             parser[SEARCH_SECTION] = search_section
@@ -141,6 +147,17 @@ class ConfigStore:
             **values,
             search_api_key=search_section.get(SEARCH_KEY, ""),
             search_endpoint=search_section.get(SEARCH_ENDPOINT_KEY, "") or SEARCH_ENDPOINT,
+            max_tool_rounds=int(
+                self._read_optional_llm_values().get(
+                    "max_tool_rounds", MAX_TOOL_ROUNDS
+                )
+            ),
+            history_turns=int(
+                self._read_optional_llm_values().get("history_turns", HISTORY_TURNS)
+            ),
+            max_tokens=int(
+                self._read_optional_llm_values().get("max_tokens", MAX_TOKENS)
+            ),
         )
 
     def _read_search_section(self) -> dict[str, str]:
@@ -155,3 +172,44 @@ class ConfigStore:
         if not parser.has_section(SEARCH_SECTION):
             return {}
         return {key: value for key, value in parser.items(SEARCH_SECTION) if value.strip()}
+
+    def _read_optional_llm_values(self) -> dict[str, str]:
+        """读取 ``[llm]`` 里的可选高级设置，保存时原样写回。"""
+        if not self._path.is_file():
+            return {}
+        parser = configparser.ConfigParser(interpolation=None)
+        try:
+            parser.read(self._path, encoding="utf-8")
+        except (configparser.Error, UnicodeDecodeError, OSError):
+            return {}
+        if not parser.has_section(SECTION):
+            return {}
+        result: dict[str, str] = {}
+        for key in OPTIONAL_INT_KEYS:
+            raw = parser.get(SECTION, key, fallback="").strip()
+            if raw:
+                result[key] = str(_parse_positive_int(key, raw))
+        return result
+
+
+def _parse_positive_int(key: str, raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ConfigError(
+            ErrorCode.CONFIG_INVALID,
+            "配置项“%s”必须是整数" % key,
+        ) from None
+    if value <= 0:
+        raise ConfigError(
+            ErrorCode.CONFIG_INVALID,
+            "配置项“%s”必须是正整数" % key,
+        )
+    return value
+
+
+def _optional_int(parser: configparser.ConfigParser, key: str, default: int) -> int:
+    raw = parser.get(SECTION, key, fallback="").strip()
+    if not raw:
+        return default
+    return _parse_positive_int(key, raw)
