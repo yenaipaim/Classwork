@@ -50,11 +50,6 @@ class SearchClient:
         self._timeout = timeout
         self._transport = transport or _post_json
 
-    @property
-    def configured(self) -> bool:
-        """是否填写了搜索用的 API Key。"""
-        return bool(self._api_key)
-
     def search(self, query: str, count: int | None = None) -> list[SearchResult]:
         """执行一次搜索；任何失败都抛 :class:`ToolError`。"""
         text = query.strip() if isinstance(query, str) else ""

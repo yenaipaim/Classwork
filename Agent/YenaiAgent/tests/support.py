@@ -43,19 +43,6 @@ def text_chunks(*parts: str) -> list[LlmChunk]:
     return [LlmChunk(content=part) for part in parts]
 
 
-def tool_chunk(
-    index: int,
-    call_id: str,
-    name: str,
-    arguments: str,
-) -> LlmChunk:
-    return LlmChunk(
-        tool_calls=(
-            ToolCallDelta(index=index, id=call_id, name=name, arguments=arguments),
-        )
-    )
-
-
 def tool_script(call_id: str, name: str, arguments: str) -> list[LlmChunk]:
     """模拟工具调用被拆成三段流式分片。"""
     half = max(len(arguments) // 2, 1)

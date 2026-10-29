@@ -21,7 +21,6 @@ INPUT_PLACEHOLDER = "输入问题：Enter 发送，Ctrl+J 换行（可粘贴多�
 READY = "就绪"
 THINKING = "思考中…"
 CANCELLING = "正在中断…（等当前工具结束，最长约 30 秒）"
-TOOL_RUNNING = "调用工具"
 # 等待时间与工具次数让用户能判断“还活着”而不是卡死
 STATUS_THINKING_ELAPSED = "思考中… %d 秒（已调用工具 %d 次）"
 STATUS_TOOL_RUNNING = "调用工具：%s · 已 %d 秒（第 %d 次）"

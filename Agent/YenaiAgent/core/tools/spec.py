@@ -65,12 +65,6 @@ class ToolRegistry:
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values()]
 
-    def describe(self) -> str:
-        """供 list_tools 工具回给模型的清单文本。"""
-        return "\n".join(
-            "%s：%s" % (tool.name, tool.description) for tool in self._tools.values()
-        )
-
     def execute(self, name: str, arguments: str) -> ToolOutcome:
         """执行一次工具调用；任何可预期错误都转成 ok=False 的结果。"""
         tool = self._tools.get(name)
