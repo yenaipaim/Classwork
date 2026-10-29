@@ -17,7 +17,7 @@ from textual.timer import Timer
 from textual.widgets import Footer, Header, Static
 
 from core.config import AppConfig, ConfigStore
-from core.errors import ConfigError
+from core.errors import AgentError, ConfigError
 from core.events import (
     AgentEvent,
     TextDelta,
@@ -51,6 +51,9 @@ from .i18n import (
     THINKING,
     UNKNOWN_COMMAND,
     WELCOME,
+    WORKSPACE_SWITCHED,
+    WORKSPACE_SWITCH_FAILED,
+    WORKSPACE_USAGE,
     describe_error,
 )
 from .screens.config_screen import ConfigScreen
@@ -202,6 +205,8 @@ class YenaiApp(App[None]):
             self._open_config()
         elif command == "/model":
             self._switch_model(argument)
+        elif command == "/workspace":
+            self._switch_workspace(argument)
         else:
             self._chat.add_system(UNKNOWN_COMMAND % raw, kind="error")
 
@@ -226,6 +231,30 @@ class YenaiApp(App[None]):
             return
         self._session.switch_model(saved)
         self._chat.add_system(MODEL_SWITCHED % saved.model_name)
+
+    def _switch_workspace(self, raw: str) -> None:
+        """`/workspace` 查看当前工作区，`/workspace 目录` 切换工具范围。"""
+        if self._session is None:
+            self._chat.add_system(NEED_CONFIG, kind="error")
+            self._open_config()
+            return
+        if not raw:
+            self._chat.add_system(WORKSPACE_USAGE % str(self._workspace_root))
+            return
+        try:
+            new_root = self._session.switch_workspace(raw)
+        except AgentError as exc:
+            self._chat.add_system(
+                WORKSPACE_SWITCH_FAILED % describe_error(exc), kind="error"
+            )
+            return
+        except OSError as exc:
+            self._chat.add_system(
+                WORKSPACE_SWITCH_FAILED % str(exc), kind="error"
+            )
+            return
+        self._workspace_root = new_root
+        self._chat.add_system(WORKSPACE_SWITCHED % new_root)
 
     def _start_turn(self, question: str) -> None:
         if self._turn_busy:

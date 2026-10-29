@@ -1,5 +1,6 @@
 # 本地配置，含 API Key，禁止提交
 config.ini
+config.json
 
 # 对话历史记录（本地存档，不上传）
 chat_history/
@@ -11,3 +12,6 @@ __pycache__/
 .venv/
 
 data/
+
+
+_skills_extract/

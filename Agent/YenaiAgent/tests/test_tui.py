@@ -319,3 +319,33 @@ async def test_first_run_opens_config_screen_and_builds_session(tmp_path) -> Non
         assert app._session is not None
         assert app._session.config.model_name == "test-model"
         assert (tmp_path / "config.ini").is_file()
+
+
+def _system_texts(app: YenaiApp) -> list[str]:
+    return [
+        _plain(child)
+        for child in app._chat.children
+        if child.has_class("system")
+    ]
+
+
+async def test_workspace_command_reports_switch_and_errors(make_session, tmp_path) -> None:
+    """`/workspace` 查看、切换，目录不存在时报错且不改变工作区。"""
+    new_ws = tmp_path / "ws_b"
+    new_ws.mkdir()
+    app = make_app(make_session(FakeBackend()), tmp_path)
+
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "/workspace")
+        assert any("当前工作区" in text for text in _system_texts(app))
+
+        await submit(app, pilot, "/workspace %s" % new_ws)
+        texts = _system_texts(app)
+        assert any(
+            "工作区已切换" in text and str(new_ws.resolve()) in text for text in texts
+        )
+        assert app._workspace_root == new_ws.resolve()
+
+        await submit(app, pilot, "/workspace %s" % (tmp_path / "missing_ws"))
+        assert any("切换工作区失败" in text for text in _system_texts(app))
+        assert app._workspace_root == new_ws.resolve()  # 失败不改变工作区

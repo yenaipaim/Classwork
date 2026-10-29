@@ -34,7 +34,8 @@ YenaiAgent/
 └── architecture.mmd      # 分层与依赖方向图
 ```
 
-`config.ini`、`chat_history/` 与各类缓存由**仓库根目录**的 `.gitignore` 统一忽略。
+`config.ini`、`chat_history/`、解压技能的 `_skills_extract/` 与各类缓存由**仓库根目录**
+的 `.gitignore` 统一忽略，不会提交到仓库。
 
 ## 分层契约
 
@@ -54,6 +55,7 @@ YenaiAgent/
 ```bash
 pip install -r requirements.txt
 python main.py            # 或者：python -m tui
+python main.py --workspace F:\your\project    # 启动时指定工作区（默认本项目目录）
 ```
 
 首次启动没有 `config.ini` 时，会弹出中文配置页，填写：
@@ -106,8 +108,20 @@ baidu_qianfan_api_key = your-baidu-key
   - `/clear` 清屏（保留上下文）
   - `/reset` 清空上下文并换新存档
   - `/model` 查看当前模型；`/model 名称` 切换模型（保留上下文，同时写回 config.ini）
+  - `/workspace` 查看当前工作区；`/workspace 目录` 切换工作区（保留上下文）
   - `/config` 重新打开配置页（保存后换新会话）
   - `/exit` 退出
+
+### 工作区
+
+工作区是文件工具的沙箱范围，也决定 `RunCli` 命令的工作目录：
+
+- 默认是 YenaiAgent 项目目录本身；启动时可用 `--workspace 路径` 指定，
+  运行中随时用 `/workspace 目录路径` 切换。
+- 支持 `~`、`%环境变量%` 与相对路径（按当前进程目录解析）；目录必须已存在。
+- 切换只影响工具范围，**上下文与存档保留**：对话不用重来。
+- 切到外部目录后，`list_directory_contents` / `read_text_file` 等才能访问该目录
+  （不切换就只能访问默认工作区，绝对路径也会被沙箱挡下）。
 
 ### 长时间任务、卡顿与中断
 
@@ -191,7 +205,7 @@ baidu_qianfan_api_key = your-baidu-key
 - 参数为 `command`（程序名或完整路径）与 `args`（字符串数组），内部拼成
   `[command, *args]` 交给 `subprocess.run(..., shell=False)`，逐个参数传递，
   不经过 Shell 解析——`args` 里的 `;`、`&&`、管道等只会作为普通字符串交给程序。
-- 工作目录固定为项目根目录；返回 JSON：`exit_code`、`stdout`、`stderr`，以及
+- 工作目录为当前工作区（默认项目根目录）；返回 JSON：`exit_code`、`stdout`、`stderr`，以及
   两路各自的 `*_truncated` 标记；退出码非 0 时 `ok` 为 `false`，模型可据此重试。
 - 默认超时 30 秒（可由模型指定 1–120 秒），超时会终止进程并在 `error` 中说明；
   stdout/stderr 各自超过 8000 字符时保留头尾、中间标注「已截断 N 字符」。
@@ -202,12 +216,13 @@ baidu_qianfan_api_key = your-baidu-key
 
 文件工具限制在沙箱根目录内：相对路径以沙箱根为基准，绝对路径也必须在根内；
 只处理纯文本（UTF-8 / UTF-16 / GB18030，最大 2 MB）；删除根目录、重命名覆盖已有文件都会被拒绝。
+沙箱根默认为项目目录，`--workspace` / `/workspace` 可切换到其他目录（见「工作区」）。
 
 ## 开发与测试
 
 ```bash
 pip install -r requirements.txt   # 运行依赖与测试依赖都在这一份里
-pytest tests -q          # 当前 116 个用例，约 10 秒
+pytest tests -q          # 当前 123 个用例，约 11 秒
 ```
 
 - 网络完全用 `tests/support.py` 里的 `FakeBackend` 脚本化替身，不发起真实请求；

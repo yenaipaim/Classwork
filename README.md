@@ -16,7 +16,7 @@ Anything/
 ├── LLM_UPLOAD_MCP/         ← 第三次课：AnythingLLM 文档上传页
 ├── Agent/Practice01/       ← 第四次课：多轮对话命令行工具
 ├── Agent/Practice02/       ← 第五次课：本地文件操作工具扩展
-└── Agent/YenaiAgent/       ← 第六次课：core/TUI 分层重构（Textual 界面）
+└── Agent/YenaiAgent/       ← 第六、七次课：core/TUI 分层重构（Textual 界面）
 ```
 
 | 目录 | 课程 | 简介 | 启动方式 |
@@ -340,7 +340,7 @@ Agent/Practice02/
 
 ---
 
-## Agent/YenaiAgent — 分层重构 TUI 版（第六次课）
+## Agent/YenaiAgent — 分层重构 TUI 版（第六、七次课）
 
 > 把 Practice02 重构为 **core + tui** 两层：对话、工具、会话、存档全部收进 `core/`，
 > 终端界面换成 **Textual**，后续 Web / Desktop 可直接复用同一套 core。
@@ -372,7 +372,9 @@ python Agent\YenaiAgent\main.py
 - 状态栏：就绪 / 思考中 / 工具运行 / 取消
 - 输入框：多行编辑，`Enter` 发送，`Ctrl+J` 换行（增强键盘终端也可用 `Shift+Enter`）
 - 快捷键：`Ctrl+Q` 退出，`Ctrl+C` 中断当前回复（空闲时退出），`Ctrl+L` 清屏
-- 命令：`/help` `/clear` `/reset` `/config` `/model` `/exit`
+- 命令：`/help` `/clear` `/reset` `/config` `/model` `/workspace` `/exit`
+- 工作区：默认为项目目录，`--workspace` 启动指定或 `/workspace` 运行时切换；
+  决定文件工具沙箱与 `RunCli` 的工作目录，切换时保留上下文
 
 ### 测试
 
@@ -381,8 +383,8 @@ cd Agent\YenaiAgent
 python -m pytest tests -q
 ```
 
-覆盖配置读写、上下文裁剪、工具注册表、文件沙箱越界、会话事件流、存档格式、
-分层约束（core 不得依赖 UI）以及 TUI 无头测试。
+覆盖配置读写、上下文裁剪、工具注册表、文件沙箱越界与工作区切换、会话事件流、
+存档格式、分层约束（core 不得依赖 UI）以及 TUI 无头测试，当前 123 个用例。
 
 ---
 
@@ -403,6 +405,22 @@ pip install mcp httpx uvicorn openai textual trafilatura
 > `openai` 供 `Agent/Practice01`、`Agent/Practice02` 与 `Agent/YenaiAgent` 使用；
 > `textual` / `trafilatura` 仅 `Agent/YenaiAgent` 需要（后者用于 `fetchWeb`）；
 > `mcp` / `httpx` / `uvicorn` 供 `Pet` 与 `LLM_MCP` 使用。
+
+### 不上传的本地文件
+
+以下都是运行数据或敏感配置，已在根 `.gitignore` 排除（不会进入仓库）：
+
+| 模式 | 内容 |
+|------|------|
+| `config.ini` | 各 Agent 的接口地址 / API 密钥 |
+| `config.json` | `Pet/web` 的 AI 接口密钥（明文 Key） |
+| `chat_history/` | 每次运行的对话存档 |
+| `_skills_extract/` | YenaiAgent 解压技能包的临时目录（源 zip 在 `F:\yenaipaim\Plugin`） |
+| `data/` | 临时图片与模板 |
+| `__pycache__/`、`*.py[cod]`、`.pytest_cache/`、`.venv/` | 缓存与虚拟环境 |
+
+已跟踪的文件改 `.gitignore` 不会自动移除，需要用 `git rm --cached <文件>` 解除跟踪。
+（`Pet/web/config.json` 已按此处理，本地文件保留。）
 
 ---
 

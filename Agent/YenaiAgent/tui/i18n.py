@@ -33,12 +33,16 @@ CONFIG_CANCELLED = "未提供配置，无法继续。"
 CONFIG_SAVED = "配置已保存，开始新会话。"
 MODEL_USAGE = "当前模型：%s；用“/model 模型名称”切换，上下文会保留。"
 MODEL_SWITCHED = "模型已切换为：%s（上下文保留，可继续提问）。"
+WORKSPACE_USAGE = "当前工作区：%s；用 /workspace 目录路径 切换（相对路径按当前进程目录解析）。"
+WORKSPACE_SWITCHED = "工作区已切换：%s；文件工具沙箱与 RunCli 工作目录随之改变，上下文保留。"
+WORKSPACE_SWITCH_FAILED = "切换工作区失败：%s"
 
 HELP_TEXT = """可用命令：
   /help    显示本帮助
   /clear   清空聊天显示
   /reset   清空上下文并另起存档
   /model   查看当前模型；/model 名称 切换模型（保留上下文）
+  /workspace 查看当前工作区；/workspace 目录 切换（文件工具与命令的范围）
   /config  修改模型配置（会开始新会话）
   /exit    退出程序
 快捷键：Enter 发送、Ctrl+J 换行（部分终端也可用 Shift+Enter / Ctrl+Enter 换行）、Ctrl+C 中断/退出、Ctrl+Q 退出、Ctrl+L 清屏"""

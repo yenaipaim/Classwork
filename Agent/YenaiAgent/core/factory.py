@@ -87,15 +87,22 @@ def create_session(
         backend = OpenAIBackend(
             config.base_url, config.api_key, config.request_timeout
         )
+    # 搜索配置只读一次：换工作区时重建注册表，密钥与接口地址原样带过去；
+    # 抓取与命令行工具不依赖配置，随注册表按新工作区重新创建（RunCli 的
+    # cwd 会变成新工作区）。
+    search_client = SearchClient(
+        config.search_api_key, endpoint=config.search_endpoint
+    )
+
+    def registry_factory(root: Path | str) -> ToolRegistry:
+        return build_registry(root, search_client=search_client)
+
     if registry is None:
-        registry = build_registry(
-            workspace_root,
-            search_client=SearchClient(
-                config.search_api_key, endpoint=config.search_endpoint
-            ),
-        )
+        registry = registry_factory(workspace_root)
     transcript = Transcript(history_dir, config.model_name)
-    return AgentSession(backend, registry, config, transcript)
+    return AgentSession(
+        backend, registry, config, transcript, registry_factory=registry_factory
+    )
 
 
 def _list_tools(registry: ToolRegistry) -> dict:

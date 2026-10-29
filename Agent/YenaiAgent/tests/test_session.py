@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from core.config import AppConfig
-from core.errors import ErrorCode, LlmRequestError
+from core.errors import ConfigError, ErrorCode, LlmRequestError
 from core.events import (
     TextDelta,
     ToolCallFinished,
@@ -15,8 +17,9 @@ from core.events import (
     TurnFailed,
     TurnStarted,
 )
+from core.factory import build_registry, create_session
 from core.llm.types import LlmChunk
-from core.session import CancelToken
+from core.session import AgentSession, CancelToken
 from support import FakeBackend, RaisingBackend, text_chunks, tool_script
 
 
@@ -284,3 +287,105 @@ def test_reset_clears_history_and_starts_new_transcript(make_session) -> None:
     second_path = session.transcript_path
     assert second_path is not None and second_path != first_path
     assert "q1" not in second_path.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------- 工作区切换
+
+
+def test_switch_workspace_rebinds_file_tools(make_session, workspace, tmp_path) -> None:
+    (workspace / "old.txt").write_text("旧工作区", encoding="utf-8")
+    other = tmp_path / "other_ws"
+    (other / "docs").mkdir(parents=True)
+    (other / "docs" / "new.txt").write_text("新工作区", encoding="utf-8")
+    session = make_session(FakeBackend())
+
+    new_root = session.switch_workspace(str(other))
+
+    assert new_root == other.resolve()
+    # 新工作区内的文件可以读
+    ok = session.registry.execute(
+        "read_text_file", json.dumps({"path": "docs/new.txt"})
+    )
+    assert ok.ok is True
+    assert "新工作区" in ok.output
+    # 原工作区的文件已不可见（沙箱跟着切换）
+    blocked = session.registry.execute("read_text_file", json.dumps({"path": "old.txt"}))
+    assert blocked.ok is False
+    # 文件工具报告的项目根也换成了新目录
+    cwd_info = session.registry.execute("get_current_working_directory", "{}")
+    assert json.loads(cwd_info.output)["project_root"] == str(other.resolve())
+
+
+def test_switch_workspace_keeps_context(make_session, tmp_path) -> None:
+    backend = FakeBackend([text_chunks("一"), text_chunks("二")])
+    session = make_session(backend)
+
+    collect(session, "q1")
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    session.switch_workspace(other)
+    collect(session, "q2")
+
+    # 两轮问答应连续存在，切换工作区不清上下文
+    assert [item["content"] for item in session.history[:2]] == ["q1", "一"]
+    third = backend.requests[1].messages
+    assert third[1] == {"role": "user", "content": "q1"}
+    assert third[2] == {"role": "assistant", "content": "一"}
+
+
+def test_switch_workspace_rejects_missing_directory(make_session, tmp_path) -> None:
+    session = make_session(FakeBackend())
+
+    with pytest.raises(ConfigError) as excinfo:
+        session.switch_workspace(tmp_path / "absent_ws")
+
+    assert excinfo.value.code is ErrorCode.CONFIG_INVALID
+    assert "不存在" in excinfo.value.detail
+
+
+def test_switch_workspace_rejects_a_file(make_session, tmp_path) -> None:
+    target = tmp_path / "plain.txt"
+    target.write_text("x", encoding="utf-8")
+    session = make_session(FakeBackend())
+
+    with pytest.raises(ConfigError):
+        session.switch_workspace(target)
+
+
+def test_switch_workspace_requires_registry_factory(workspace, tmp_path) -> None:
+    """没有注入工厂时（直接构造的会话）不能切换，报错而不是静默失败。"""
+    session = AgentSession(
+        FakeBackend(),
+        build_registry(workspace),
+        AppConfig(base_url="http://x", api_key="k", model_name="m"),
+    )
+
+    with pytest.raises(ConfigError):
+        session.switch_workspace(tmp_path)
+
+
+def test_create_session_wires_up_workspace_switch(tmp_path) -> None:
+    """走正式装配点的会话同样能切换（TUI 依赖这条路径）。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.txt").write_text("A", encoding="utf-8")
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "b.txt").write_text("B", encoding="utf-8")
+
+    session = create_session(
+        AppConfig(base_url="http://x", api_key="k", model_name="m"),
+        workspace_root=ws,
+        history_dir=tmp_path / "hist",
+        backend=FakeBackend(),
+    )
+
+    new_root = session.switch_workspace(other)
+    assert new_root == other.resolve()
+
+    assert session.registry.execute(
+        "read_text_file", json.dumps({"path": "b.txt"})
+    ).ok is True
+    assert session.registry.execute(
+        "read_text_file", json.dumps({"path": "a.txt"})
+    ).ok is False

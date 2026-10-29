@@ -39,11 +39,16 @@ def history_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def make_session(config, workspace, history_dir):
     def factory(backend=None, *, config=config) -> AgentSession:
+        # 与 create_session 一致：注入注册表工厂，支持切换工作区
+        def registry_factory(root):
+            return build_registry(root)
+
         return AgentSession(
             backend or FakeBackend(),
-            build_registry(workspace),
+            registry_factory(workspace),
             config,
             Transcript(history_dir, config.model_name),
+            registry_factory=registry_factory,
         )
 
     return factory

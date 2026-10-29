@@ -5,14 +5,16 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from datetime import datetime
-from typing import Any, Iterator
+from pathlib import Path
+from typing import Any, Callable, Iterator
 
 from .config import AppConfig
 from .constants import MAX_REPEATED_TOOL_CALLS
 from .context import build_messages
-from .errors import AgentError, ErrorCode, LlmRequestError
+from .errors import AgentError, ConfigError, ErrorCode, LlmRequestError
 from .events import (
     AgentEvent,
     TextDelta,
@@ -61,11 +63,14 @@ class AgentSession:
         registry: ToolRegistry,
         config: AppConfig,
         transcript: Transcript | None = None,
+        registry_factory: Callable[[Path | str], ToolRegistry] | None = None,
     ) -> None:
         self._backend = backend
         self._registry = registry
         self._config = config
         self._transcript = transcript
+        # 由装配点注入：换工作区时按新目录重建工具注册表
+        self._registry_factory = registry_factory
         self._history: list[dict[str, Any]] = []
 
     @property
@@ -93,6 +98,26 @@ class AgentSession:
     def switch_model(self, config: AppConfig) -> None:
         """切换模型等设置：保留当前上下文，从下一轮开始生效。"""
         self._config = config
+
+    def switch_workspace(self, workspace_root: Path | str) -> Path:
+        """切换工作区：文件工具沙箱与 RunCli 工作目录随之改变，上下文保留。
+
+        支持 ``%VAR%`` / ``~`` / 相对路径（按当前进程目录解析）。
+        目录不存在或会话未注入注册表工厂时抛 :class:`ConfigError`。
+        """
+        root = Path(os.path.expandvars(str(workspace_root))).expanduser().resolve()
+        if not root.exists():
+            raise ConfigError(
+                ErrorCode.CONFIG_INVALID, "工作区目录不存在：%s" % workspace_root
+            )
+        if not root.is_dir():
+            raise ConfigError(ErrorCode.CONFIG_INVALID, "工作区不是目录：%s" % root)
+        if self._registry_factory is None:
+            raise ConfigError(
+                ErrorCode.CONFIG_INVALID, "当前会话未启用工作区切换"
+            )
+        self._registry = self._registry_factory(root)
+        return root
 
     def ask(
         self,

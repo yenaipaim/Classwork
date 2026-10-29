@@ -40,9 +40,10 @@ python Agent\YenaiAgent\main.py
 | 界面 | 终端逐行打印 + 转圈动画 | Textual 全屏 TUI：消息卡片、工具卡片、配置页 |
 | 依赖方向 | — | 严格 `tui → core`，core 不依赖任何 UI 库 |
 | 装配方式 | 模块级全局 | `core/factory.py` 注入 backend / registry / 沙箱根 |
-| 测试 | 手工验证 | `tests/` 覆盖 core 与 TUI（pytest，无头模式，108 个用例） |
+| 测试 | 手工验证 | `tests/` 覆盖 core 与 TUI（pytest，无头模式，123 个用例） |
 | 工具 | 13 个 | 16 个：在旧版基础上增加 `searchWeb`（联网搜索）、`fetchWeb`（抓网页正文）、`RunCli`（本地命令行） |
 | 输入 | `input()` 单行 | 多行输入框：`Enter` 发送、`Ctrl+J` 换行，卡片式消息流 |
+| 工作区 | 固定为项目目录 | `--workspace` 启动指定，`/workspace` 运行时切换（文件沙箱 + `RunCli` 目录） |
 
 ## 配置
 
@@ -56,7 +57,8 @@ model_name = your-model
 ```
 
 Practice01 / Practice02 在配置缺失时用终端问答创建；YenaiAgent 会弹出中文配置页
-（也可手写该文件）。`config.ini` 与 `chat_history/` 都属于本地运行数据，不应提交。
+（也可手写该文件）。`config.ini`、`chat_history/` 与 YenaiAgent 解压技能的
+`_skills_extract/` 都属于本地运行数据，已在仓库根 `.gitignore` 中排除，不应提交。
 
 ## 依赖
 
