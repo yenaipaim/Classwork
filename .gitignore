@@ -48,5 +48,6 @@ data/
 # Agent Skills 本地技能目录（想版本化技能就删掉这一行）
 .agents/
 
-# MCP 本机覆盖配置（默认 .mcp.json 随代码提交，这里只忽略个人覆盖版本）
+# MCP 本机配置：仓库只提交 .mcp.example.json 模板，真实配置不入库
+.mcp.json
 .mcp.local.json

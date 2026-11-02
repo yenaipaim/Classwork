@@ -33,13 +33,14 @@ YenaiAgent/
 ├── main.py               # python main.py
 ├── pyproject.toml        # 打包、入口点、pytest 配置
 ├── requirements.txt      # 依赖清单（运行 + 测试，装这一份即可）
-├── .mcp.json             # 本机 MCP Server 配置（PeiHospitalMCP、Bazi-MCP）
+├── .mcp.example.json     # MCP 配置模板（复制为 .mcp.json 后按本机修改）
 └── architecture.mmd      # 分层与依赖方向图
 ```
 
 `config.ini`、`chat_history/`、本地技能目录 `.agents/` 与各类缓存由**仓库根目录**的
-`.gitignore` 统一忽略，不会提交到仓库。`.mcp.json` 是示例配置，会进版本库；不要往里写
-密钥（可用 `${环境变量}` 引用），按机器覆盖时用 `YENAI_MCP_CONFIG` 指向别的文件。
+`.gitignore` 统一忽略，不会提交到仓库。`.mcp.json` 是**本机配置**，默认也在忽略之列；
+仓库只提交 `.mcp.example.json` 模板。复制模板为 `.mcp.json`、填上自己的 Server 即可；
+不要把私有 endpoint 或密钥写进会提交的文件（HTTP 鉴权用 `${环境变量}` 引用）。
 
 ## 分层契约
 
@@ -310,7 +311,7 @@ roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
 
 1. 环境变量 `YENAI_MCP_CONFIG` 指向的文件（相对路径按项目根解析；设为 `off` 可整体
    关闭 MCP，测试就是用它隔离的）；
-2. `<项目根>/.mcp.json`（默认就是本仓库的 `Agent/YenaiAgent/.mcp.json`）；
+2. `<项目根>/.mcp.json`（把仓库里的 `.mcp.example.json` 复制成它即可）；
 3. 包目录下的 `.mcp.json`；
 4. 仓库根目录的 `.mcp.json`（方便从仓库根目录启动 `python Agent/YenaiAgent/main.py`）。
 
@@ -327,7 +328,7 @@ roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
     },
     "Bazi-MCP": {
       "type": "streamable_http",
-      "url": "https://mcp.api-inference.modelscope.net/c996e9ed3d9e4b/mcp"
+      "url": "https://mcp.api-inference.modelscope.net/<你的-endpoint-id>/mcp"
     },
     "local-tools": {
       "type": "stdio",
@@ -352,6 +353,7 @@ roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
 - OpenAI 兼容接口的函数名只能是 `[A-Za-z0-9_-]`：Server 里的中文工具名会注册成
   `tool_1`、`tool_2`……，中文原名与描述一起保留，模型按描述挑选。
 - 依赖 `mcp>=2.2,<3`；stdio Server 是普通子进程，退出时随会话一起关闭。
+- `.mcp.json` 不入库（含私有地址），仓库里是 `.mcp.example.json` 模板；
 - 示例里的 `PeiHospitalMCP`（`Pet/` 里的宠物医院 MCP）默认监听 9000 端口，需要先跑起来，否则启动摘要会显示
   连接失败——不影响其他功能；服务起来后重启 YenaiAgent 即自动接入。
 

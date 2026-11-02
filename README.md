@@ -449,8 +449,9 @@ roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
   ASCII 函数名，纯中文的工具名注册成 `tool_1`、`tool_2`…，中文原名写进描述，模型按描述挑选。
 - 单个 Server 配置写错或连不上只影响它自己：启动摘要与 `/mcp` 显示原因，本地工具和其他
   Server 照常可用；stdio Server 随会话退出关闭。
-- 本仓库的 `.mcp.json` 已配好两个 Server：`PeiHospitalMCP`（`Pet` 的宠物医院 MCP，
-  `http://127.0.0.1:9000/mcp`，28 个工具）与 `Bazi-MCP`（ModelScope 上的八字排盘服务，3 个工具）。
+- 仓库自带 `.mcp.example.json` 模板：`PeiHospitalMCP`（`Pet` 的宠物医院 MCP，
+  `http://127.0.0.1:9000/mcp`，28 个工具）、stdio 示例与 HTTP 示例各一个；复制成
+  `.mcp.json` 即可接入（真实配置不入库）。
 
 完整格式与字段说明见 [Agent/YenaiAgent/README.md](Agent/YenaiAgent/README.md) 的
 「MCP（Model Context Protocol）」一节。
@@ -500,13 +501,15 @@ pip install mcp httpx uvicorn openai textual trafilatura
 | `chat_history/` | 每次运行的对话存档 |
 | `.agents/` | YenaiAgent 的 Agent Skills 本地技能目录（默认 `.agents/skills/`） |
 | `data/` | 临时图片与模板 |
+| `.mcp.json` | 本机 MCP Server 配置（仓库只提交 `.mcp.example.json` 模板） |
 | `.env`、`*.pem`、`*.key` | 环境变量与密钥文件 |
 | `*.log`、`*.tmp`、`*.bak` | 日志与临时备份 |
 | `.DS_Store`、`Thumbs.db`、`.idea/`、`.vscode/` | 系统与编辑器杂项 |
 | `__pycache__/`、`*.py[cod]`、`.pytest_cache/`、`.venv/` | 缓存与虚拟环境 |
 
-> `.mcp.json` 是 MCP 示例配置，随代码提交（不含密钥）；本机需要不同地址时用环境变量
-> `YENAI_MCP_CONFIG` 指向另一份文件，或写成 `.mcp.local.json`（已被忽略）。
+> MCP 配置：仓库提交 `.mcp.example.json` 模板（PeiHospitalMCP + stdio / HTTP 示例），
+> 复制成 `.mcp.json` 并按本机填写即可——真实 `.mcp.json` 已被忽略、不会上传；也可用
+> 环境变量 `YENAI_MCP_CONFIG` 指向另一份文件。
 
 已跟踪的文件改 `.gitignore` 不会自动移除，需要用 `git rm --cached <文件>` 解除跟踪。
 （`Pet/web/config.json` 已按此处理，本地文件保留。）
