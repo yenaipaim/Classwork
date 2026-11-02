@@ -13,7 +13,11 @@
 
 `type` 可以省略：有 `url` 时按 Streamable HTTP（地址以 `/sse` 结尾时按 SSE），
 有 `command` 时按 stdio。一家 Server 写错只会进 :attr:`McpConfig.issues`，
-不影响其余 Server 连接；整份配置缺失则等于没有 MCP 工具。
+不影响其余 Server 连接。
+
+配置文件的位置与技能目录一致：第一个技能根（默认 `<项目根>/.agents/skills/`）下的
+`.mcp.json`。文件不存在时自动写入 :data:`MCP_TEMPLATE` 模板，用户改完重启即可；
+`YENAI_MCP_CONFIG` 可指定别的文件（或用 off 整体关闭）。
 """
 
 from __future__ import annotations
@@ -32,7 +36,6 @@ from ..constants import (
     MCP_CONNECT_TIMEOUT,
     MCP_MAX_OUTPUT,
 )
-from ..paths import PACKAGE_ROOT
 
 #: 覆盖配置文件路径的环境变量；设为 off/none/disabled 可整体关闭 MCP。
 ENV_MCP_CONFIG = "YENAI_MCP_CONFIG"
@@ -51,6 +54,32 @@ _TRANSPORTS = {
 }
 _DISABLED_VALUES = {"off", "none", "disabled", "0"}
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+#: 技能根目录里默认的 MCP 配置文件名（与 Skill 的 `.agents/skills/` 同目录）。
+SKILLS_DIR_PARTS = (".agents", "skills")
+
+#: 配置缺失时写入的模板：第一项是课程里用到的 PeiHospitalMCP（本机 9000 端口），
+#: 另外两条 disabled 示例演示 stdio 与带鉴权头的 HTTP 写法，不参与连接。
+MCP_TEMPLATE: Mapping[str, Any] = {
+    "PeiHospitalMCP": {
+        "type": "streamable_http",
+        "url": "http://127.0.0.1:9000/mcp",
+        "connect_timeout": 5,
+        "timeout": 30,
+    },
+    "local-example": {
+        "type": "stdio",
+        "command": "python",
+        "args": ["-m", "your_mcp_server"],
+        "disabled": True,
+    },
+    "remote-example": {
+        "type": "streamable_http",
+        "url": "https://example.com/mcp",
+        "headers": {"Authorization": "Bearer ${MCP_TOKEN}"},
+        "disabled": True,
+    },
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +132,8 @@ class McpConfig:
     path: Path | None = None
     servers: tuple[McpServerConfig, ...] = ()
     issues: tuple[McpConfigIssue, ...] = ()
+    #: 本次是否刚写下模板（首次运行），界面据此提示「改完重启」
+    created: bool = False
 
     @property
     def configured(self) -> bool:
@@ -196,11 +227,38 @@ def load_mcp_config(path: Path | str) -> McpConfig:
     return McpConfig(path=path, servers=tuple(servers), issues=tuple(issues))
 
 
-def discover_mcp_config(project_root: Path | str | None = None) -> McpConfig:
-    """按优先级找到 `.mcp.json`：环境变量 → 项目根目录 → 程序目录 → 仓库根目录。
+def mcp_config_path(skills_dir: Path | str) -> Path:
+    """技能目录里的 MCP 配置文件位置（默认 `<技能根>/.mcp.json`）。"""
+    return Path(skills_dir).expanduser() / MCP_CONFIG_FILENAME
 
-    `YENAI_MCP_CONFIG` 是显式覆盖（相对路径按项目根解析），设为 off 表示
-    本次运行不启用 MCP——测试和演示都靠它避免去连真实服务。
+
+def render_mcp_template() -> str:
+    """把 :data:`MCP_TEMPLATE` 渲染成带缩进、中文不转义的 JSON 文本。"""
+    return json.dumps({"mcpServers": MCP_TEMPLATE}, ensure_ascii=False, indent=2) + "\n"
+
+
+def ensure_mcp_config(path: Path | str) -> bool:
+    """文件不存在时写入模板，返回是否新建；已存在的配置永不覆盖。"""
+    target = Path(path).expanduser()
+    if target.exists():
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(render_mcp_template(), encoding="utf-8")
+    return True
+
+
+def discover_mcp_config(
+    skills_dir: Path | str | None = None,
+    *,
+    project_root: Path | str | None = None,
+    create: bool = True,
+) -> McpConfig:
+    """定位并解析 MCP 配置：技能目录里的 `.mcp.json`，缺失时按需生成模板。
+
+    `skills_dir` 传第一个技能根（由 :class:`~core.skills.SkillLibrary` 决定，
+    默认 `<项目根>/.agents/skills/`）；不传则按 `project_root` 推默认值。
+    `YENAI_MCP_CONFIG` 仍是显式覆盖（相对路径按 `project_root` 解析），设为 off
+    表示本次运行不启用 MCP——测试和演示都靠它避免去连真实服务。
     """
     override = os.environ.get(ENV_MCP_CONFIG)
     if override is not None:
@@ -209,28 +267,36 @@ def discover_mcp_config(project_root: Path | str | None = None) -> McpConfig:
             return McpConfig()
         path = Path(os.path.expandvars(value)).expanduser()
         if not path.is_absolute():
-            base = Path(project_root) if project_root is not None else Path.cwd()
-            path = base / path
+            path = _base_dir(project_root) / path
         return load_mcp_config(path)
 
-    base = Path(project_root) if project_root is not None else Path.cwd()
-    seen: set[Path] = set()
-    for candidate in (
-        base / MCP_CONFIG_FILENAME,
-        PACKAGE_ROOT / MCP_CONFIG_FILENAME,
-        # 从仓库根目录 `python Agent/YenaiAgent/main.py` 启动时也能读到
-        PACKAGE_ROOT.parent.parent / MCP_CONFIG_FILENAME,
-    ):
+    root = (
+        Path(skills_dir).expanduser()
+        if skills_dir is not None
+        else _base_dir(project_root).joinpath(*SKILLS_DIR_PARTS)
+    )
+    path = mcp_config_path(root)
+    created = False
+    if create:
         try:
-            key = candidate.resolve()
-        except OSError:  # pragma: no cover - 极端路径问题
-            key = candidate
-        if key in seen:
-            continue
-        seen.add(key)
-        if candidate.is_file():
-            return load_mcp_config(candidate)
-    return McpConfig()
+            created = ensure_mcp_config(path)
+        except OSError as exc:
+            # 目录不可写不该拦住整个启动：按缺失处理，问题进 issues
+            return McpConfig(
+                path=path,
+                issues=(McpConfigIssue("", "创建 MCP 配置模板失败：%s" % exc),),
+            )
+    config = load_mcp_config(path)
+    return McpConfig(
+        path=config.path,
+        servers=config.servers,
+        issues=config.issues,
+        created=created,
+    )
+
+
+def _base_dir(project_root: Path | str | None) -> Path:
+    return Path(project_root) if project_root is not None else Path.cwd()
 
 
 def _parse_server(

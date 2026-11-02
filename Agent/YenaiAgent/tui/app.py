@@ -53,6 +53,7 @@ from .i18n import (
     MCP_NONE,
     MCP_STARTUP_FAILED,
     MCP_STARTUP_OK,
+    MCP_TEMPLATE_CREATED,
     MODEL_SWITCHED,
     MODEL_USAGE,
     NEED_CONFIG,
@@ -369,6 +370,8 @@ class YenaiApp(App[None]):
         hub = self._session.mcp if self._session is not None else None
         if hub is None or not hub.config.configured:
             return
+        if hub.config.created and hub.config.path is not None:
+            self._chat.add_system(MCP_TEMPLATE_CREATED % str(hub.config.path))
         rows = hub.status()
         failed = [row for row in rows if row.enabled and not row.connected]
         connected = [row for row in rows if row.connected]

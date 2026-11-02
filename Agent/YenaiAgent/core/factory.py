@@ -117,8 +117,9 @@ def create_session(
     运行中切换工作区的影响。扫描根默认是 ``<project_root>/.agents/skills/``，也可
     由 ``config.ini`` 的 ``[skills] roots`` 或 ``skill_roots`` 追加/替换。
 
-    MCP 来自 ``<project_root>/.mcp.json``（可用 ``YENAI_MCP_CONFIG`` 指定别的
-    文件或设为 off 关闭）：``mcp_config`` 可直接给已解析的 :class:`McpConfig`
+    MCP 配置与技能目录同源：第一个技能根（默认 ``<project_root>/.agents/skills/``）
+    下的 ``.mcp.json`` 缺失时自动写入模板；也可用 ``YENAI_MCP_CONFIG`` 指定别的
+    文件或设为 off 关闭。``mcp_config`` 可直接给已解析的 :class:`McpConfig`
     或文件路径，``mcp`` 则用于注入现成的 :class:`McpHub`（测试与复用）。
     """
     if backend is None:
@@ -141,7 +142,7 @@ def create_session(
     # MCP 连接与配置只在会话创建时建立一次；切换工作区重建注册表时复用同一批会话
     hub = mcp
     if hub is None:
-        parsed = _resolve_mcp_config(mcp_config, project_root)
+        parsed = _resolve_mcp_config(mcp_config, project_root, skills.skills_dir)
         hub = McpHub(parsed)
         hub.start()
 
@@ -167,12 +168,13 @@ def create_session(
 def _resolve_mcp_config(
     source: McpConfig | Path | str | None,
     project_root: Path | str | None,
+    skills_dir: Path | str | None = None,
 ) -> McpConfig:
-    """显式配置优先，否则按项目根目录发现 ``.mcp.json``。"""
+    """显式配置优先，否则用技能目录里的 ``.mcp.json``（缺失时生成模板）。"""
     if isinstance(source, McpConfig):
         return source
     if source is None:
-        return discover_mcp_config(project_root)
+        return discover_mcp_config(skills_dir, project_root=project_root)
     path = Path(source).expanduser()
     if not path.is_absolute():
         base = Path(project_root) if project_root is not None else Path.cwd()

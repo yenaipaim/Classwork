@@ -348,8 +348,8 @@ Agent/Practice02/
 
 > 把 Practice02 重构为 **core + tui** 两层：对话、工具、会话、存档全部收进 `core/`，
 > 终端界面换成 **Textual**，后续 Web / Desktop 可直接复用同一套 core。
-> 第十次课接入 **MCP 客户端**：启动时读 `.mcp.json`，把外部 MCP Server 的工具注册成普通
-> 函数工具。工具 18 个：日期 / 闰年、10 个文件工具、联网搜索 `searchWeb`、网页抓取 `fetchWeb`、
+> 第十次课接入 **MCP 客户端**：启动时读技能目录里的 `.mcp.json`（缺失自动生成模板），
+> 把外部 MCP Server 的工具注册成普通函数工具。工具 18 个：日期 / 闰年、10 个文件工具、联网搜索 `searchWeb`、网页抓取 `fetchWeb`、
 > 本地命令行 `RunCli`、技能加载 `loadSkill`、技能创建 `createSkill`，外加工具清单。
 
 ```powershell
@@ -439,9 +439,10 @@ roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
 
 ### MCP 客户端（第十次课）
 
-- 启动时读取「当前项目根目录」下的 `.mcp.json`，支持 `stdio`、`streamable_http`（Streamable
-  HTTP）与 `sse` 三种传输；查找顺序：环境变量 `YENAI_MCP_CONFIG` → 项目根 `.mcp.json` →
-  包目录 → 仓库根，设为 `off` 可整体关闭。
+- 配置与技能同源：第一个技能根下的 `.mcp.json`（默认 `<启动目录>/.agents/skills/.mcp.json`），
+  支持 `stdio`、`streamable_http`（Streamable HTTP）与 `sse` 三种传输；文件不存在时自动
+  写入内置模板（PeiHospitalMCP + 两条 disabled 示例），已有配置永不覆盖；
+  `YENAI_MCP_CONFIG` 可指定别的文件，设为 `off` 则整体关闭。
 - 连上后调用 `list_tools()`，把工具名、描述、参数 Schema 转成 `ToolSpec` 注册进同一个注册表
   （排在本地工具之后），模型看到的就是普通 Function Calling；调用时按内部映射找回 Server 与
   原名，文本、结构化结果、错误原样返回。
@@ -449,9 +450,12 @@ roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
   ASCII 函数名，纯中文的工具名注册成 `tool_1`、`tool_2`…，中文原名写进描述，模型按描述挑选。
 - 单个 Server 配置写错或连不上只影响它自己：启动摘要与 `/mcp` 显示原因，本地工具和其他
   Server 照常可用；stdio Server 随会话退出关闭。
-- 仓库自带 `.mcp.example.json` 模板：`PeiHospitalMCP`（`Pet` 的宠物医院 MCP，
-  `http://127.0.0.1:9000/mcp`，28 个工具）、stdio 示例与 HTTP 示例各一个；复制成
-  `.mcp.json` 即可接入（真实配置不入库）。
+- 模板默认带 `PeiHospitalMCP`（`Pet` 的宠物医院 MCP，`http://127.0.0.1:9000/mcp`，
+  28 个工具），另附 stdio 与带鉴权头 HTTP 两条 disabled 示例；生成在技能目录里，
+  属于本机文件、不入库。
+- 排错先看 `url` 和外壳：`url` 要写全协议头与路径（`http://127.0.0.1:9000/mcp`），
+  少协议头会进「配置问题」列表，少了 `/mcp` 会连到根路径失败；最外层漏掉
+  `"mcpServers"` 会被当成空配置（0 个 Server、0 条问题），这种情况 `/mcp` 里什么都看不到。
 
 完整格式与字段说明见 [Agent/YenaiAgent/README.md](Agent/YenaiAgent/README.md) 的
 「MCP（Model Context Protocol）」一节。
@@ -465,8 +469,8 @@ python -m pytest tests -q
 
 覆盖配置读写、上下文裁剪、工具注册表、文件沙箱越界与工作区切换、会话事件流、
 存档格式、Skill 发现与加载（含多根扫描与 `[skills]` 配置）、`createSkill` 的名称规范化
-与 `SKILL.md` 生成（含已存在不覆盖）、MCP 配置解析与命名、真实 stdio MCP Server 的
-list / call 往返，分层约束（core 不得依赖 UI）以及 TUI 无头测试，当前 182 个用例。
+与 `SKILL.md` 生成（含已存在不覆盖）、MCP 配置解析与技能目录模板生成、工具命名、真实 stdio MCP Server 的
+list / call 往返，分层约束（core 不得依赖 UI）以及 TUI 无头测试，当前 187 个用例。
 
 跑测试先装：`pip install pytest pytest-asyncio`（或 `pip install -r Agent\YenaiAgent\requirements.txt` 一次装齐）。
 
@@ -501,15 +505,15 @@ pip install mcp httpx uvicorn openai textual trafilatura
 | `chat_history/` | 每次运行的对话存档 |
 | `.agents/` | YenaiAgent 的 Agent Skills 本地技能目录（默认 `.agents/skills/`） |
 | `data/` | 临时图片与模板 |
-| `.mcp.json` | 本机 MCP Server 配置（仓库只提交 `.mcp.example.json` 模板） |
+| `.mcp.json` | 本机 MCP Server 配置（放在技能目录里，首次启动自动生成模板） |
 | `.env`、`*.pem`、`*.key` | 环境变量与密钥文件 |
 | `*.log`、`*.tmp`、`*.bak` | 日志与临时备份 |
 | `.DS_Store`、`Thumbs.db`、`.idea/`、`.vscode/` | 系统与编辑器杂项 |
 | `__pycache__/`、`*.py[cod]`、`.pytest_cache/`、`.venv/` | 缓存与虚拟环境 |
 
-> MCP 配置：仓库提交 `.mcp.example.json` 模板（PeiHospitalMCP + stdio / HTTP 示例），
-> 复制成 `.mcp.json` 并按本机填写即可——真实 `.mcp.json` 已被忽略、不会上传；也可用
-> 环境变量 `YENAI_MCP_CONFIG` 指向另一份文件。
+> MCP 配置：不再随仓库提交模板文件——首次运行会在技能目录里自动生成 `.mcp.json`
+> （PeiHospitalMCP + 两条 disabled 示例），按本机改完重启即可；该目录已被忽略，不会上传。
+> 也可用环境变量 `YENAI_MCP_CONFIG` 指向另一份文件。
 
 已跟踪的文件改 `.gitignore` 不会自动移除，需要用 `git rm --cached <文件>` 解除跟踪。
 （`Pet/web/config.json` 已按此处理，本地文件保留。）

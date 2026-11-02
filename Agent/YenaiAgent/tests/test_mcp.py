@@ -119,6 +119,78 @@ def test_discover_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv(ENV_MCP_CONFIG, str(path))
     config = discover_mcp_config(tmp_path)
     assert config.path == path
+    assert config.created is False
+
+
+def test_discover_creates_template_in_first_skills_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(ENV_MCP_CONFIG, raising=False)
+    skills_dir = tmp_path / ".agents" / "skills"
+    config = discover_mcp_config(skills_dir)
+    assert config.created is True
+    assert config.path == skills_dir / ".mcp.json"
+    assert config.path.is_file()
+    # 模板里的 PeiHospitalMCP 直接可用，示例条目默认关闭
+    pei = config.server("PeiHospitalMCP")
+    assert pei is not None and pei.enabled
+    assert pei.url == "http://127.0.0.1:9000/mcp"
+    local = config.server("local-example")
+    remote = config.server("remote-example")
+    assert local is not None and local.enabled is False
+    assert remote is not None and remote.enabled is False
+    assert config.issues == ()
+
+
+def test_discover_keeps_existing_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(ENV_MCP_CONFIG, raising=False)
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    path = skills_dir / ".mcp.json"
+    payload = {"mcpServers": {"mine": {"url": "http://127.0.0.1:9999/mcp"}}}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    config = discover_mcp_config(skills_dir)
+    assert config.created is False
+    assert config.server("mine") is not None
+    # 已有配置永远不被模板覆盖
+    assert json.loads(path.read_text(encoding="utf-8")) == payload
+
+
+def test_discover_off_creates_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(ENV_MCP_CONFIG, "off")
+    config = discover_mcp_config(tmp_path / "skills")
+    assert config.configured is False
+    assert config.created is False
+    assert not (tmp_path / "skills").exists()
+
+
+def test_discover_defaults_to_project_skills_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(ENV_MCP_CONFIG, raising=False)
+    config = discover_mcp_config(project_root=tmp_path)
+    assert config.path == tmp_path / ".agents" / "skills" / ".mcp.json"
+    assert config.created is True
+
+
+def test_discover_ignores_old_locations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """只认技能目录：项目根 / 程序目录下的旧 .mcp.json 不再生效。"""
+    monkeypatch.delenv(ENV_MCP_CONFIG, raising=False)
+    legacy = tmp_path / ".mcp.json"
+    legacy.write_text(
+        '{"mcpServers": {"legacy": {"url": "http://127.0.0.1:1/mcp"}}}',
+        encoding="utf-8",
+    )
+    config = discover_mcp_config(tmp_path / "skills", project_root=tmp_path)
+    assert config.server("legacy") is None
+    assert config.created is True
 
 
 def test_disabled_server_keeps_placeholder(tmp_path: Path) -> None:

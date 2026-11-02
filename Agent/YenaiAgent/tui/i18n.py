@@ -50,8 +50,8 @@ SKILLS_ADD_HINT = (
 SKILLS_SKIPPED = "跳过 %d 个目录："
 MCP_NEED_SESSION = "尚未创建会话（先完成模型配置），无法查看 MCP 服务。"
 MCP_NONE = (
-    "没有配置 MCP Server：在项目根目录建 .mcp.json，"
-    "或用环境变量 YENAI_MCP_CONFIG 指定配置文件，然后重启。"
+    "没有配置 MCP Server：默认读取技能目录里的 .mcp.json"
+    "（缺失时会自动生成模板），也可用环境变量 YENAI_MCP_CONFIG 指定配置文件。"
 )
 MCP_HEADER = "MCP 服务（%d 个，配置：%s）："
 MCP_ITEM = "  - %s [%s]：%s，工具 %d 个"
@@ -61,6 +61,7 @@ MCP_ISSUES = "配置问题（%d 处）："
 MCP_ISSUE_ITEM = "  - %s"
 MCP_STARTUP_OK = "MCP：已连接 %d 个服务，共 %d 个工具（/mcp 查看详情）。"
 MCP_STARTUP_FAILED = "MCP：%d 个服务连接失败（%s），本地工具不受影响；/mcp 查看详情。"
+MCP_TEMPLATE_CREATED = "MCP：首次运行已生成配置模板 %s，改完重启生效。"
 
 HELP_TEXT = """可用命令：
   /help    显示本帮助

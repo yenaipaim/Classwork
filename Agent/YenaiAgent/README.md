@@ -33,14 +33,14 @@ YenaiAgent/
 ├── main.py               # python main.py
 ├── pyproject.toml        # 打包、入口点、pytest 配置
 ├── requirements.txt      # 依赖清单（运行 + 测试，装这一份即可）
-├── .mcp.example.json     # MCP 配置模板（复制为 .mcp.json 后按本机修改）
-└── architecture.mmd      # 分层与依赖方向图
+├── architecture.mmd      # 分层与依赖方向图
+└── .agents/skills/       # 本机技能目录；MCP 配置 .mcp.json 也在其中（首次启动生成模板）
 ```
 
 `config.ini`、`chat_history/`、本地技能目录 `.agents/` 与各类缓存由**仓库根目录**的
-`.gitignore` 统一忽略，不会提交到仓库。`.mcp.json` 是**本机配置**，默认也在忽略之列；
-仓库只提交 `.mcp.example.json` 模板。复制模板为 `.mcp.json`、填上自己的 Server 即可；
-不要把私有 endpoint 或密钥写进会提交的文件（HTTP 鉴权用 `${环境变量}` 引用）。
+`.gitignore` 统一忽略，不会提交到仓库。MCP 配置 `.mcp.json` 就放在技能目录里（本机文件，
+同样不入库）：首次启动时自动生成模板，之后按本机情况增删 Server 即可。不要把私有
+endpoint 或密钥写进会提交的文件（HTTP 鉴权用 `${环境变量}` 引用）。
 
 ## 分层契约
 
@@ -303,17 +303,17 @@ roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
 
 ## MCP（Model Context Protocol）
 
-启动时读取「当前项目根目录」下的 `.mcp.json`，连上后把每个 Server 的 `list_tools()`
-结果注册进同一个工具注册表——模型看到的就是普通 Function Calling，调用时由客户端
-转发到对应 Server，文本、结构化结果和错误原样交回。
+配置文件与技能同源：**第一个技能根下的 `.mcp.json`**（默认 `<启动目录>/.agents/skills/.mcp.json`）。
+启动时读取它，连上后把每个 Server 的 `list_tools()` 结果注册进同一个工具注册表——
+模型看到的就是普通 Function Calling，调用时由客户端转发到对应 Server，文本、结构化
+结果和错误原样交回。
 
-配置文件的查找顺序（只加载先找到的一份）：
+「有就直接用，没有就自己建」：首次运行（或换了技能根）时文件不存在，程序会把内置模板
+写进去并提示路径，改完重启即可；已有文件永远不被覆盖。技能根由 `config.ini` 的
+`[skills] roots` 或 `--skills-dir` 决定（多个时取第一个），和 `/skills` 看到的是同一处。
 
-1. 环境变量 `YENAI_MCP_CONFIG` 指向的文件（相对路径按项目根解析；设为 `off` 可整体
-   关闭 MCP，测试就是用它隔离的）；
-2. `<项目根>/.mcp.json`（把仓库里的 `.mcp.example.json` 复制成它即可）；
-3. 包目录下的 `.mcp.json`；
-4. 仓库根目录的 `.mcp.json`（方便从仓库根目录启动 `python Agent/YenaiAgent/main.py`）。
+唯一的外部覆盖是环境变量 `YENAI_MCP_CONFIG`：指向别的配置文件（相对路径按项目根解析），
+设为 `off` 则本次运行整体关闭 MCP（测试就是用它隔离的）。
 
 格式与 Claude Desktop / Cursor 的 `mcpServers` 兼容：
 
@@ -347,31 +347,39 @@ roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
 - `enabled: false`（或 `disabled: true`）保留配置但不连接；`connect_timeout`（默认 10 秒）、
   `timeout`（单次调用，默认 30 秒）、`max_output`（默认 2 万字）可按 Server 覆盖。
 - 单个 Server 写错只会进 `/mcp` 的「配置问题」列表，不影响其他 Server。
+- 最常见的两个坑：`url` 必须带协议头和路径（`http://127.0.0.1:9000/mcp`）——写成
+  `127.0.0.1:9000` 会被校验拒掉，写成 `http://127.0.0.1:9000` 会连到根路径失败；最外层
+  必须是 `"mcpServers": { ... }`，漏掉的话整份文件被当成空配置，启动摘要和 `/mcp` 都没有提示。
 - 连不上会在启动摘要和 `/mcp` 里显示失败原因（该 Server 的工具返回 `ok=false` 的结果），
   本地工具与其他 Server 照常可用；各 Server 并行连接，启动最多等 `connect_timeout` 秒。
 - `/mcp` 可查看每个 Server 的传输方式、连接状态、注册工具数与失败原因。
 - OpenAI 兼容接口的函数名只能是 `[A-Za-z0-9_-]`：Server 里的中文工具名会注册成
   `tool_1`、`tool_2`……，中文原名与描述一起保留，模型按描述挑选。
 - 依赖 `mcp>=2.2,<3`；stdio Server 是普通子进程，退出时随会话一起关闭。
-- `.mcp.json` 不入库（含私有地址），仓库里是 `.mcp.example.json` 模板；
-- 示例里的 `PeiHospitalMCP`（`Pet/` 里的宠物医院 MCP）默认监听 9000 端口，需要先跑起来，否则启动摘要会显示
-  连接失败——不影响其他功能；服务起来后重启 YenaiAgent 即自动接入。
+- 自动生成的模板在 `core/mcp/config.py` 的 `MCP_TEMPLATE` 里：一个可用的
+  `PeiHospitalMCP`（本机 9000 端口）加两条 `disabled` 示例，分别演示 stdio 与带鉴权头的
+  HTTP 写法，取消 `disabled` 并填好参数即可启用。
+- 模板与配置都是**本机文件**，`.agents/` 整个目录不入库；课堂演示时不必把私有
+  endpoint 提交上去。
+- 模板里的 `PeiHospitalMCP`（`Pet/` 里的宠物医院 MCP）默认监听 9000 端口，需要先跑起来，
+  否则启动摘要会显示连接失败——不影响其他功能；服务起来后重启 YenaiAgent 即自动接入。
 
 ## 开发与测试
 
 ```bash
 pip install -r requirements.txt   # 运行依赖与测试依赖都在这一份里
-pytest tests -q          # 当前 182 个用例，约 20 秒
+pytest tests -q          # 当前 187 个用例，约 20 秒
 ```
 
 - 网络完全用 `tests/support.py` 里的 `FakeBackend` 脚本化替身，不发起真实请求；
   搜索与抓取工具也通过注入假 transport / 假 curl 测试，跑测试不需要联网。
 - `tests/test_layers.py` 校验分层：`core` 不得 import `textual/rich/tui`，也不得做进程级 IO。
 - `tests/test_mcp.py` 覆盖 `.mcp.json` 解析（stdio / HTTP、坏条目、缺失文件、`disabled`
-  占位、`${VAR}` 展开）、配置发现与 `YENAI_MCP_CONFIG=off`、工具重名加前缀、`ToolOutcome`
-  透传，以及一个真实 stdio MCP Server（`mcp.server.mcpserver.MCPServer`，1.x 回退
-  `FastMCP`）的 list / call 往返和「坏 Server 不影响本地工具」的隔离场景；
-  `tests/conftest.py` 里 autouse 地关掉 MCP，测试不连真实服务。
+  占位、`${VAR}` 展开）、配置发现（技能目录首次生成模板、已有文件不覆盖、`off` 不落盘、
+  不认旧位置、`YENAI_MCP_CONFIG` 覆盖）、工具重名加前缀、`ToolOutcome` 透传，以及一个真实
+  stdio MCP Server（`mcp.server.mcpserver.MCPServer`，1.x 回退 `FastMCP`）的 list / call
+  往返和「坏 Server 不影响本地工具」的隔离场景；`tests/conftest.py` 里 autouse 地关掉 MCP，
+  测试不连真实服务。
 - `tests/test_skills.py` 覆盖技能发现与跳过规则、frontmatter 解析、清单注入与
   `loadSkill` 的路径解析 / 沙箱拒绝场景，以及多根扫描、重名去重与 `[skills]`
   配置解析；`createSkill` 部分覆盖名称规范化、`SKILL.md` 生成（frontmatter 可回读、
@@ -397,9 +405,9 @@ pytest tests -q          # 当前 182 个用例，约 20 秒
 - 工具从 13 个扩展到 18 个：新增 `searchWeb`（联网搜索）、`fetchWeb`（抓网页）、
   `RunCli`（执行本地命令行）、`loadSkill` / `createSkill`（技能加载与创建），
   仍然全部通过注册表统一描述、执行与错误归一。
-- 新增 MCP 客户端：`.mcp.json` 里的 Server 启动时连接，`list_tools()` 的结果动态注册成
-  工具，调用经 stdio / Streamable HTTP / SSE 转发；连不上只影响该 Server
-  （Practice02 没有的能力）。
+- 新增 MCP 客户端：技能目录里的 `.mcp.json`（首个技能根，缺失时自动生成模板）列出
+  的 Server 启动时连接，`list_tools()` 的结果动态注册成工具，调用经 stdio /
+  Streamable HTTP / SSE 转发；连不上只影响该 Server（Practice02 没有的能力）。
 
 ## 后续扩展
 
