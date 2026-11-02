@@ -19,6 +19,15 @@ from core.transcript import Transcript  # noqa: E402
 from support import FakeBackend  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _disable_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试默认不连真实 MCP Server，避免依赖本机服务与外网。
+
+    MCP 相关测试会显式构造配置并注入，不受影响。
+    """
+    monkeypatch.setenv("YENAI_MCP_CONFIG", "off")
+
+
 @pytest.fixture
 def config() -> AppConfig:
     return AppConfig(base_url="http://example.test/v1", api_key="test-key", model_name="test-model")

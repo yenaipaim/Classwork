@@ -74,7 +74,12 @@ class ToolRegistry:
         try:
             payload = json.loads(arguments) if arguments and arguments.strip() else {}
         except json.JSONDecodeError as exc:
-            return _failure("工具参数不是合法 JSON：%s" % exc)
+            # 参数被 max_tokens 截断时，报错永远是“字符串没闭合”，
+            # 把这条线索直接写进结果，模型和用户才知道该拆小或调大上限。
+            hint = ""
+            if exc.msg.startswith("Unterminated string") or exc.pos >= len(arguments) - 2:
+                hint = "（参数可能被单次输出上限截断，请拆成多次写入，或在 config.ini 调大 max_tokens）"
+            return _failure("工具参数不是合法 JSON：%s%s" % (exc, hint))
 
         if not isinstance(payload, dict):
             return _failure("工具参数必须是 JSON 对象")
@@ -94,6 +99,9 @@ class ToolRegistry:
 
 
 def _normalize(result: Any) -> ToolOutcome:
+    # MCP 工具直接给出成品的 ToolOutcome（输出可能不是 JSON），原样透传
+    if isinstance(result, ToolOutcome):
+        return result
     if isinstance(result, str):
         return ToolOutcome(result, True)
     if isinstance(result, Mapping):

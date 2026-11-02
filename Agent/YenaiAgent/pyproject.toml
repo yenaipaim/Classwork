@@ -7,7 +7,7 @@ name = "yenai-agent"
 version = "0.1.0"
 description = "YenaiAgent：core / TUI 分层的本地工具调用 Agent"
 requires-python = ">=3.10"
-dependencies = ["openai>=1.0,<4"]
+dependencies = ["openai>=1.0,<4", "mcp>=2.2,<3"]
 
 [project.optional-dependencies]
 tui = ["textual>=8.2,<9"]
@@ -17,7 +17,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 yenai = "tui.__main__:main"
 
 [tool.setuptools]
-packages = ["core", "core.llm", "core.tools", "tui", "tui.widgets", "tui.screens"]
+packages = ["core", "core.llm", "core.mcp", "core.tools", "tui", "tui.widgets", "tui.screens"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

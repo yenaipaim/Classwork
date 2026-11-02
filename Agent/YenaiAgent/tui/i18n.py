@@ -43,8 +43,24 @@ SKILLS_ROOT_ITEM = "  - %s"
 SKILLS_LOADED = "已加载 %d 个技能："
 SKILLS_ITEM = "  - %s：%s"
 SKILLS_NONE = "没有发现任何技能。"
-SKILLS_ADD_HINT = "在技能目录下建 <技能名>\\SKILL.md（frontmatter 含 name 与 description）后重启即可。"
+SKILLS_ADD_HINT = (
+    "在技能目录下建 <技能名>\\SKILL.md（frontmatter 含 name 与 description）后重启即可；"
+    "也可以直接让 Agent 用 createSkill 新建（当轮生成立即可用，无需重启）。"
+)
 SKILLS_SKIPPED = "跳过 %d 个目录："
+MCP_NEED_SESSION = "尚未创建会话（先完成模型配置），无法查看 MCP 服务。"
+MCP_NONE = (
+    "没有配置 MCP Server：在项目根目录建 .mcp.json，"
+    "或用环境变量 YENAI_MCP_CONFIG 指定配置文件，然后重启。"
+)
+MCP_HEADER = "MCP 服务（%d 个，配置：%s）："
+MCP_ITEM = "  - %s [%s]：%s，工具 %d 个"
+MCP_ITEM_DISABLED = "  - %s：未启用"
+MCP_ITEM_FAILED = "  - %s [%s]：%s，连接失败：%s"
+MCP_ISSUES = "配置问题（%d 处）："
+MCP_ISSUE_ITEM = "  - %s"
+MCP_STARTUP_OK = "MCP：已连接 %d 个服务，共 %d 个工具（/mcp 查看详情）。"
+MCP_STARTUP_FAILED = "MCP：%d 个服务连接失败（%s），本地工具不受影响；/mcp 查看详情。"
 
 HELP_TEXT = """可用命令：
   /help    显示本帮助
@@ -53,6 +69,7 @@ HELP_TEXT = """可用命令：
   /model   查看当前模型；/model 名称 切换模型（保留上下文）
   /workspace 查看当前工作区；/workspace 目录 切换（文件工具与命令的范围）
   /skills  查看已加载的 Agent Skills 技能与跳过原因
+  /mcp     查看 MCP Server 连接状态与注册的工具数量
   /config  修改模型配置（会开始新会话）
   /exit    退出程序
 快捷键：Enter 发送、Ctrl+J 换行（部分终端也可用 Shift+Enter / Ctrl+Enter 换行）、Ctrl+C 中断/退出、Ctrl+Q 退出、Ctrl+L 清屏"""

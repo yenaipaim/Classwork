@@ -16,7 +16,9 @@ from core.skills import (
     PROMPT_FOOTER,
     PROMPT_HEADER,
     SkillLibrary,
+    build_create_skill_tool,
     build_load_skill_tool,
+    normalize_skill_name,
     parse_frontmatter,
     resolve_skill_roots,
     split_skill_roots,
@@ -403,3 +405,221 @@ def test_create_session_accepts_explicit_skill_roots(tmp_path: Path) -> None:
     assert session.skills is not None
     assert [info.name for info in session.skills.skills] == ["delta"]
     assert "loadSkill" in session.registry.names()
+
+
+# ---------------------------------------------------------------- createSkill 工具
+
+
+def test_create_skill_registered_after_load_skill(workspace: Path) -> None:
+    assert "createSkill" not in build_registry(workspace).names()
+
+    # 空技能库也要能新建第一个技能：loadSkill 不注册，createSkill 照常注册
+    empty = SkillLibrary(workspace)
+    assert empty.names() == []
+    empty_registry = build_registry(workspace, skills=empty)
+    assert "createSkill" in empty_registry.names()
+    assert "loadSkill" not in empty_registry.names()
+
+    library = SkillLibrary(make_project(workspace))
+    names = build_registry(workspace, skills=library).names()
+    assert "loadSkill" in names
+    assert names.index("createSkill") == names.index("loadSkill") + 1
+    assert names.index("createSkill") < names.index("list_tools")
+
+
+def test_create_skill_tool_schema(library: SkillLibrary) -> None:
+    schema = build_create_skill_tool(library).schema()
+    function = schema["function"]
+    assert function["name"] == "createSkill"
+    assert function["parameters"]["required"] == ["name", "skillContext"]
+    assert set(function["parameters"]["properties"]) == {"name", "skillContext"}
+
+
+def test_normalize_skill_name_to_kebab_case() -> None:
+    assert normalize_skill_name("PDF Tools") == "pdf-tools"
+    assert normalize_skill_name("  Deploy_Helper  ") == "deploy-helper"
+    assert normalize_skill_name("a---b") == "a-b"
+    assert normalize_skill_name("--x--") == "x"
+    assert normalize_skill_name("v1.2.3") == "v123"
+    # 纯中文、空白与空串都规范不出来
+    assert normalize_skill_name("\u90e8\u7f72\u52a9\u624b") is None
+    assert normalize_skill_name("   ") is None
+    assert normalize_skill_name("") is None
+    assert normalize_skill_name(None) is None
+    # 长度截到 64 且不以连字符结尾
+    capped = normalize_skill_name("a" * 200)
+    assert capped is not None and len(capped) == 64
+
+
+def test_create_skill_writes_spec_compliant_skill_md(project: Path, library: SkillLibrary) -> None:
+    result = library.create(
+        "PDF Tools",
+        "\u5904\u7406 PDF \u6587\u6863\u7684\u6280\u80fd\u3002\n\n# \u6b65\u9aa4\n\n1. \u8bfb\u53d6\n",
+    )
+
+    assert result["ok"] is True
+    assert result["skill"] == "pdf-tools"
+    assert result["registered"] is True
+    assert result["file"] == ".agents/skills/pdf-tools/SKILL.md"
+
+    target = project / ".agents" / "skills" / "pdf-tools" / "SKILL.md"
+    text = target.read_text(encoding="utf-8")
+    assert text.startswith("---\nname: pdf-tools\ndescription: ")
+    assert "\r" not in text and "\ufeff" not in text
+    assert text.endswith("\n")
+    assert "1. \u8bfb\u53d6" in text  # 正文原样保留
+    # 生成的 frontmatter 能被自己的解析器读回
+    fields = parse_frontmatter(text)
+    assert fields is not None
+    assert fields["name"] == "pdf-tools"
+    assert fields["description"]
+
+    # 同一会话立即可用：登记进清单，loadSkill 能读到
+    assert "pdf-tools" in library.names()
+    assert "pdf-tools" in library.prompt_block()
+    loaded = library.load("pdf-tools")
+    assert loaded["ok"] is True and "1. \u8bfb\u53d6" in loaded["content"]
+
+
+def test_create_skill_creates_missing_root(tmp_path: Path) -> None:
+    library = SkillLibrary(tmp_path)
+    assert not (tmp_path / ".agents").exists()
+
+    result = library.create("fresh", "# Fresh\n\nBODY")
+
+    assert result["ok"] is True
+    target = tmp_path / ".agents" / "skills" / "fresh" / "SKILL.md"
+    assert target.is_file()
+    assert "fresh" in library.names()
+
+
+def test_create_skill_refuses_existing_without_touching_it(project: Path, library: SkillLibrary) -> None:
+    original = (project / ".agents" / "skills" / "alpha" / "SKILL.md").read_text(encoding="utf-8")
+
+    result = library.create("alpha", "# \u8986\u76d6")
+
+    assert result["ok"] is False
+    assert "\u5df2\u5b58\u5728" in result["error"]
+    assert "SKILL.md" in result["existing_files"]
+    # 原文件一个字节都没动
+    assert (project / ".agents" / "skills" / "alpha" / "SKILL.md").read_text(encoding="utf-8") == original
+
+
+def test_create_skill_refuses_unregistered_directory(project: Path, library: SkillLibrary) -> None:
+    # 目录存在但缺少 SKILL.md（启动时被跳过）：同样不覆盖
+    result = library.create("no-md", "# whatever")
+
+    assert result["ok"] is False
+    assert "\u5df2\u5b58\u5728" in result["error"]
+    assert not (project / ".agents" / "skills" / "no-md" / "SKILL.md").exists()
+
+
+def test_create_skill_refuses_name_taken_by_other_root(tmp_path: Path) -> None:
+    first = make_project(tmp_path / "one")
+    second = tmp_path / "two"
+    (second / "gamma").mkdir(parents=True)
+    (second / "gamma" / "SKILL.md").write_text(
+        "---\nname: gamma\ndescription: Gamma skill.\n---\nbody", encoding="utf-8"
+    )
+    library = SkillLibrary(first, roots=[first / ".agents" / "skills", second])
+
+    result = library.create("gamma", "# cloned body")
+
+    assert result["ok"] is False
+    assert "\u5360\u7528" in result["error"]
+    assert not (first / ".agents" / "skills" / "gamma").exists()
+
+
+def test_create_skill_rejects_unusable_name_and_creates_nothing(project: Path, library: SkillLibrary) -> None:
+    before = set(p.name for p in (project / ".agents" / "skills").iterdir())
+
+    result = library.create("\u90e8\u7f72\u52a9\u624b", "# body")
+
+    assert result["ok"] is False
+    assert "kebab-case" in result["error"]
+    after = set(p.name for p in (project / ".agents" / "skills").iterdir())
+    assert before == after
+
+
+def test_create_skill_requires_body(tmp_path: Path) -> None:
+    library = SkillLibrary(tmp_path)
+
+    result = library.create("empty", "   \n\n  ")
+
+    assert result["ok"] is False
+    assert "\u6b63\u6587" in result["error"]
+    assert not (tmp_path / ".agents" / "skills" / "empty").exists()
+
+
+def test_create_skill_keeps_model_frontmatter_and_extra_keys(project: Path, library: SkillLibrary) -> None:
+    context = (
+        "---\n"
+        "name: Some Other Name\n"
+        "description: |\n"
+        "  multi line\n"
+        "  description\n"
+        "license: MIT\n"
+        "metadata:\n"
+        "  owner: me\n"
+        "---\n\n"
+        "# Body\n\nBODY_TEXT\n"
+    )
+    result = library.create("fancy-skill", context)
+
+    assert result["ok"] is True
+    text = (project / ".agents" / "skills" / "fancy-skill" / "SKILL.md").read_text(encoding="utf-8")
+    fields = parse_frontmatter(text)
+    assert fields is not None
+    assert fields["name"] == "fancy-skill"  # 以目录名为准
+    assert fields["description"] == "multi line description"
+    assert fields["license"] == "MIT"
+    assert "metadata:\n  owner: me" in text  # 嵌套字段原样保留
+    assert "BODY_TEXT" in text
+
+
+def test_create_skill_derives_description_from_body(project: Path, library: SkillLibrary) -> None:
+    result = library.create("derived", "# \u6784\u5efa\u6d41\u7a0b\n\n\u5148\u88c5\u4f9d\u8d56\u3002\n")
+
+    assert result["ok"] is True
+    fields = parse_frontmatter(
+        (project / ".agents" / "skills" / "derived" / "SKILL.md").read_text(encoding="utf-8")
+    )
+    assert fields["description"] == "\u6784\u5efa\u6d41\u7a0b"
+
+
+def test_create_skill_quotes_description_when_needed(project: Path, library: SkillLibrary) -> None:
+    context = "---\nname: x\ndescription: has: colon inside\n---\n\nBODY"
+    result = library.create("colon", context)
+
+    assert result["ok"] is True
+    text = (project / ".agents" / "skills" / "colon" / "SKILL.md").read_text(encoding="utf-8")
+    assert "description: >-" in text
+    assert parse_frontmatter(text)["description"] == "has: colon inside"
+
+
+def test_create_skill_via_registry(library: SkillLibrary, workspace: Path) -> None:
+    registry = build_registry(workspace, skills=library)
+
+    created = registry.execute(
+        "createSkill",
+        json.dumps({"name": "via-registry", "skillContext": "# Via registry\n\nBODY"}),
+    )
+    assert created.ok is True
+    payload = json.loads(created.output)
+    assert payload["ok"] is True and payload["skill"] == "via-registry"
+
+    # 建完立刻能加载
+    loaded = registry.execute("loadSkill", json.dumps({"name": "via-registry"}))
+    assert loaded.ok is True
+    assert "BODY" in json.loads(loaded.output)["content"]
+
+    # 同名再建：明确提示，不覆盖
+    again = registry.execute(
+        "createSkill", json.dumps({"name": "via-registry", "skillContext": "# new"})
+    )
+    assert again.ok is False
+    assert "\u5df2\u5b58\u5728" in again.output
+
+    # 缺参数：参数错误而不是崩溃
+    missing = registry.execute("createSkill", json.dumps({"name": "x"}))
+    assert missing.ok is False

@@ -29,6 +29,7 @@ from .events import (
 from .llm.backend import LlmBackend
 from .llm.collector import TurnCollector
 from .llm.types import LlmRequest
+from .mcp import McpHub
 from .skills import SkillLibrary
 from .tools.spec import ToolRegistry
 from .transcript import Transcript
@@ -66,6 +67,7 @@ class AgentSession:
         transcript: Transcript | None = None,
         registry_factory: Callable[[Path | str], ToolRegistry] | None = None,
         skills: SkillLibrary | None = None,
+        mcp: McpHub | None = None,
     ) -> None:
         self._backend = backend
         self._registry = registry
@@ -75,6 +77,8 @@ class AgentSession:
         self._registry_factory = registry_factory
         # 技能清单：名字与描述注入 System Prompt，全文只在 loadSkill 被调用时进入上下文
         self._skills = skills
+        # MCP 会话：退出时由界面层调用 close() 释放子进程 / HTTP 连接
+        self._mcp = mcp
         self._history: list[dict[str, Any]] = []
 
     @property
@@ -94,6 +98,10 @@ class AgentSession:
         return self._skills
 
     @property
+    def mcp(self) -> McpHub | None:
+        return self._mcp
+
+    @property
     def transcript_path(self):
         return self._transcript.path if self._transcript is not None else None
 
@@ -102,6 +110,11 @@ class AgentSession:
         self._history.clear()
         if self._transcript is not None:
             self._transcript.reset()
+
+    def close(self) -> None:
+        """结束 MCP 会话、回收子进程；可重复调用，不影响已保存的上下文。"""
+        if self._mcp is not None:
+            self._mcp.close()
 
     def switch_model(self, config: AppConfig) -> None:
         """切换模型等设置：保留当前上下文，从下一轮开始生效。"""

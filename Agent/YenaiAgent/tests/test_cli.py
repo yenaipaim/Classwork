@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +34,20 @@ def test_working_directory_is_injected(tmp_path: Path) -> None:
     result = runner.run(PYTHON, ["-c", "import os; print(os.getcwd())"])
 
     assert Path(result["stdout"].strip()) == tmp_path
+
+
+def test_windows_children_get_workspace_temp_dir(tmp_path: Path) -> None:
+    """Windows 下把 TMP/TEMP 指到工作区内的 .cli-tmp：有些 CLI 写系统临时目录会被拒。"""
+    if os.name != "nt":
+        pytest.skip("只有 Windows 需要重定向临时目录")
+    runner = CommandRunner(cwd=str(tmp_path))
+
+    result = runner.run(PYTHON, ["-c", "import os; print(os.environ['TMP'], os.environ['TEMP'])"])
+
+    tmp, temp = result["stdout"].split()
+    assert Path(tmp) == (tmp_path / ".cli-tmp").resolve()
+    assert tmp == temp
+    assert (tmp_path / ".cli-tmp").is_dir()
 
 
 def test_nonzero_exit_is_reported() -> None:

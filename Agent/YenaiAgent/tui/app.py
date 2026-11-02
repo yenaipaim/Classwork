@@ -43,6 +43,16 @@ from .i18n import (
     CONTEXT_CLEARED,
     HELP_TEXT,
     INPUT_PLACEHOLDER,
+    MCP_HEADER,
+    MCP_ISSUES,
+    MCP_ISSUE_ITEM,
+    MCP_ITEM,
+    MCP_ITEM_DISABLED,
+    MCP_ITEM_FAILED,
+    MCP_NEED_SESSION,
+    MCP_NONE,
+    MCP_STARTUP_FAILED,
+    MCP_STARTUP_OK,
     MODEL_SWITCHED,
     MODEL_USAGE,
     NEED_CONFIG,
@@ -72,10 +82,15 @@ from .widgets.chat_log import ChatLog
 _FLUSH_INTERVAL = 0.05
 
 
-def _skill_description(text: str, limit: int = 120) -> str:
-    """技能描述压成一行，过长时截断，用于 `/skills` 展示。"""
+def _one_line(text: str, limit: int) -> str:
+    """压成一行并截断，用于 `/skills`、`/mcp` 这类状态展示。"""
     one_line = " ".join(text.split())
     return one_line if len(one_line) <= limit else one_line[:limit] + "…"
+
+
+def _skill_description(text: str, limit: int = 120) -> str:
+    """技能描述压成一行，过长时截断，用于 `/skills` 展示。"""
+    return _one_line(text, limit)
 
 
 class YenaiApp(App[None]):
@@ -185,6 +200,9 @@ class YenaiApp(App[None]):
         self._prompt.focus()
 
     def _install_config(self, config: AppConfig) -> None:
+        # 重新配置等于换一个会话：先把旧会话的 MCP 子进程 / 连接收掉
+        if self._session is not None:
+            self._session.close()
         self._session = create_session(
             config,
             workspace_root=self._workspace_root,
@@ -193,6 +211,7 @@ class YenaiApp(App[None]):
             skill_roots=self._skill_dirs or None,
         )
         self._status.update(READY)
+        self._report_mcp_startup()
 
     # ---------------------------------------------------------------- 输入
 
@@ -228,6 +247,8 @@ class YenaiApp(App[None]):
             self._switch_workspace(argument)
         elif command == "/skills":
             self._show_skills()
+        elif command == "/mcp":
+            self._show_mcp()
         else:
             self._chat.add_system(UNKNOWN_COMMAND % raw, kind="error")
 
@@ -306,6 +327,66 @@ class YenaiApp(App[None]):
                 for item in skills.skipped
             )
             self._chat.add_system("\n".join(lines))
+
+    def _show_mcp(self) -> None:
+        """`/mcp` 查看每个 MCP Server 的连接状态与已注册工具数。"""
+        if self._session is None:
+            self._chat.add_system(MCP_NEED_SESSION, kind="error")
+            return
+        hub = self._session.mcp
+        if hub is None or not hub.config.configured:
+            self._chat.add_system(MCP_NONE)
+            return
+        rows = hub.status()
+        location = str(hub.config.path) if hub.config.path is not None else "—"
+        lines = [MCP_HEADER % (len(rows), location)]
+        for row in rows:
+            if not row.enabled:
+                lines.append(MCP_ITEM_DISABLED % row.name)
+            elif row.connected:
+                lines.append(
+                    MCP_ITEM % (row.name, row.transport, row.target, row.tool_count)
+                )
+            else:
+                lines.append(
+                    MCP_ITEM_FAILED
+                    % (
+                        row.name,
+                        row.transport,
+                        row.target,
+                        _one_line(row.error or "未知原因", 200),
+                    )
+                )
+        self._chat.add_system("\n".join(lines))
+        if hub.issues:
+            issues = "\n".join(MCP_ISSUE_ITEM % str(item) for item in hub.issues)
+            self._chat.add_system(
+                MCP_ISSUES % len(hub.issues) + "\n" + issues, kind="warn"
+            )
+
+    def _report_mcp_startup(self) -> None:
+        """启动/换配置后提示 MCP 结果；没配置 MCP 时不打扰用户。"""
+        hub = self._session.mcp if self._session is not None else None
+        if hub is None or not hub.config.configured:
+            return
+        rows = hub.status()
+        failed = [row for row in rows if row.enabled and not row.connected]
+        connected = [row for row in rows if row.connected]
+        if failed:
+            names = "、".join(row.name for row in failed)
+            self._chat.add_system(
+                MCP_STARTUP_FAILED % (len(failed), names), kind="warn"
+            )
+        if connected:
+            self._chat.add_system(
+                MCP_STARTUP_OK
+                % (len(connected), sum(row.tool_count for row in connected))
+            )
+        if hub.issues:
+            issues = "\n".join(MCP_ISSUE_ITEM % str(item) for item in hub.issues)
+            self._chat.add_system(
+                MCP_ISSUES % len(hub.issues) + "\n" + issues, kind="warn"
+            )
 
     def _start_turn(self, question: str) -> None:
         if self._turn_busy:
@@ -437,3 +518,8 @@ class YenaiApp(App[None]):
 
     def action_clear_screen(self) -> None:
         self._chat.clear_messages()
+
+    def on_unmount(self) -> None:
+        # 退出时回收 MCP 子进程与 HTTP 连接；可重复调用
+        if self._session is not None:
+            self._session.close()

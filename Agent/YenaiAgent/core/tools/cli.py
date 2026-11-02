@@ -10,8 +10,10 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, Callable
 
 from ..constants import CLI_MAX_OUTPUT, CLI_MAX_TIMEOUT, CLI_TIMEOUT
@@ -132,7 +134,28 @@ def _run_process(argv: list[str], timeout: float, cwd: str | None) -> subprocess
         timeout=timeout,
         cwd=cwd,
         check=False,
+        env=_child_env(cwd),
     )
+
+
+def _child_env(cwd: str | None) -> dict[str, str]:
+    """给子进程一份环境变量，Windows 下把 TMP/TEMP 指到工作区内。
+
+    部分 CLI（如 officecli 这类 .NET 程序）会往 %TEMP% 写临时文件，在受限进程里
+    这一步可能被拒绝，报 “Access to the path ...\\Temp\\tmpXXXX.tmp is denied”。
+    把临时目录换到工作区内的 .cli-tmp，既保证可写，也不污染系统临时目录。
+    """
+    env = os.environ.copy()
+    if os.name != "nt":
+        return env
+    base = Path(cwd or os.getcwd()).resolve() / ".cli-tmp"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return env
+    env["TMP"] = str(base)
+    env["TEMP"] = str(base)
+    return env
 
 
 def _build_argv(command: Any, args: Sequence[Any] | None) -> list[str]:

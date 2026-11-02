@@ -2,6 +2,8 @@
 openai>=1.0,<4
 textual>=8.2,<9
 trafilatura>=2.0,<3
+# MCP 客户端：stdio / Streamable HTTP / SSE 都由官方 SDK 提供
+mcp>=2.2,<3
 
 # 跑测试才用到的（已一并列出，避免维护两份清单）
 pytest>=8

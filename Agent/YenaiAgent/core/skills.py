@@ -7,6 +7,12 @@
 
 完整内容按需进入上下文：`loadSkill` 工具被模型调用时才读文件，读取范围
 始终限制在该 Skill 目录内部。
+
+第九次课新增 `createSkill`：模型按用户的自然语言要求新建 Skill——在第一个技能根
+目录（默认 `.agents/skills/`）下建一个 kebab-case 子目录，并写入符合 Agent Skills
+规范的 `SKILL.md`（YAML Frontmatter + name + description + 正文）。名称会被统一
+规范成小写字母、数字与连字符；同名 Skill 已存在时直接返回提示，绝不覆盖原内容。
+Skill 附属的 references/、scripts/ 等目录与文件，由模型继续调用文件工具补齐。
 """
 
 from __future__ import annotations
@@ -14,6 +20,7 @@ from __future__ import annotations
 import locale
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -39,6 +46,17 @@ PROMPT_HEADER = "You have access to the following skills:"
 PROMPT_FOOTER = (
     "Use the loadSkill tool to load the full instructions of a skill when needed. "
     "You can also load additional files referenced by a skill."
+)
+
+# createSkill 的命名规范：小写字母、数字与单个连字符（Agent Skills 推荐的 kebab-case）
+SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+SKILL_NAME_MAX_LENGTH = 64
+# 自动补全 description 时取的最大长度
+DERIVED_DESCRIPTION_MAX_CHARS = 200
+
+# YAML 里可以安全写成普通标量的字符集（其余情况退化成折叠块标量）
+_PLAIN_SCALAR_SAFE = re.compile(
+    r"^[A-Za-z0-9\u4e00-\u9fff ,.()（）:;!?、。，；：！？\-/+=<>%']+$"
 )
 
 
@@ -159,6 +177,116 @@ class SkillLibrary:
         if isinstance(resolved, dict):
             return resolved
         return self._read_result(info, resolved)
+
+    # ------------------------------------------------------------------ 创建
+
+    def create(self, name: str, skill_context: str) -> dict[str, Any]:
+        """`createSkill` 的处理函数：新建一个符合规范的 Skill 目录与 SKILL.md。
+
+        只写入第一个技能根目录（`skills_dir`，默认 `.agents/skills/`），且**从不覆盖**
+        已有内容：目录已存在、Skill 名已被别的根目录占用、或名称无法规范成 kebab-case，
+        都返回 `ok=False` 的明确提示。
+        """
+        slug = normalize_skill_name(name)
+        if slug is None:
+            return {
+                "ok": False,
+                "error": (
+                    "Skill 名称无法规范成小写英文格式：%r。"
+                    "请使用英文 kebab-case（小写字母、数字与单个连字符），例如 \"pdf-tools\"。"
+                    % (name if isinstance(name, str) else "")
+                ),
+                "hint": "名称只允许 a-z、0-9 与连字符，不能以连字符开头或结尾。",
+                "available": self.names(),
+            }
+
+        document, fields, body = build_skill_document(slug, skill_context)
+        if body == "":
+            return {
+                "ok": False,
+                "error": (
+                    "skillContext 去掉 YAML Frontmatter 后没有正文，"
+                    "SKILL.md 至少需要一段说明文字。"
+                ),
+                "hint": "请把要写入 SKILL.md 的完整内容（含 frontmatter 或正文）一起传入。",
+                "would_create": "%s/%s" % (slug, SKILL_FILE),
+            }
+
+        root = self.skills_dir
+        directory = (root / slug).resolve(strict=False)
+        if not _inside(root, directory):
+            return {"ok": False, "error": "目标目录越出技能根目录：%s" % directory}
+
+        existing = self.get(slug)
+        if existing is not None and existing.directory != directory:
+            return {
+                "ok": False,
+                "error": "Skill 名称已被占用：%s（已加载自 %s）" % (slug, existing.directory),
+                "hint": "换一个 name，或先修改已有的 Skill 文件。",
+                "available": self.names(),
+            }
+
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            directory.mkdir()
+        except FileExistsError:
+            return {
+                "ok": False,
+                "error": "Skill「%s」已存在：%s" % (slug, directory),
+                "hint": (
+                    "为避免覆盖原有内容，不会改写已存在的 Skill 目录。"
+                    "要修改它请用文件工具（edit_text_file / create_file）；"
+                    "要新建请换一个 name。"
+                ),
+                "existing_files": _list_files(directory),
+                "available": self.names(),
+            }
+        except OSError as exc:
+            # 写不下去就整个回滚，不留半个空目录
+            _remove_quietly(directory)
+            return {"ok": False, "error": "创建 Skill 目录失败：%s" % exc}
+
+        try:
+            target = directory / SKILL_FILE
+            with target.open("x", encoding="utf-8", newline="\n") as handle:
+                handle.write(document)
+        except FileExistsError:
+            _remove_quietly(directory)
+            return {
+                "ok": False,
+                "error": "Skill「%s」已存在：%s" % (slug, directory),
+                "hint": "同名 Skill 不会被覆盖；请换 name，或直接用文件工具修改现有 SKILL.md。",
+                "available": self.names(),
+            }
+        except OSError as exc:
+            _remove_quietly(directory)
+            return {"ok": False, "error": "写入 %s 失败：%s" % (SKILL_FILE, exc)}
+
+        # 立刻登记，让同一会话里接下来的 loadSkill 能读到新文件
+        before = set(self._skills)
+        self._register(directory)
+        registered = slug in self._skills
+
+        result: dict[str, Any] = {
+            "ok": True,
+            "skill": slug,
+            "directory": str(directory),
+            "file": _display(self._root, target),
+            "description": fields["description"],
+            "bytes": target.stat().st_size,
+            "registered": registered,
+            "note": (
+                "SKILL.md 已按 Agent Skills 规范写入（YAML Frontmatter 含 name 与 "
+                "description）。需要 references/、scripts/ 等附属目录或其他文件时，"
+                "请继续调用文件工具（create_directory / create_file / edit_text_file）。"
+            ),
+        }
+        if not registered:
+            skipped = self._skipped[-1] if self._skipped else {}
+            result["skipped_reason"] = skipped.get("reason", "登记失败")
+        elif before:
+            result["skills_total"] = len(self._skills)
+        return result
 
     # ------------------------------------------------------------------ 内部
 
@@ -310,7 +438,203 @@ def build_load_skill_tool(library: SkillLibrary) -> ToolSpec:
     )
 
 
-# ---------------------------------------------------------------------- Frontmatter
+# ---------------------------------------------------------------------- 创建 Skill
+
+
+def build_create_skill_tool(library: SkillLibrary) -> ToolSpec:
+    """构造 `createSkill` 工具：按用户的自然语言要求新建一个 Skill。"""
+
+    # 参数名与 JSON Schema 的键完全一致（skillContext 用小驼峰，和 searchWeb /
+    # fetchWeb 一样是给模型看的名字）：注册表按键名原样把参数交给处理函数。
+    def handler(name: str, skillContext: str) -> dict[str, Any]:
+        return library.create(name, skillContext)
+
+    return ToolSpec(
+        name="createSkill",
+        description=(
+            "根据用户的要求创建一个新的 Agent Skill：在技能目录（默认 .agents/skills/）下"
+            "新建一个以 name 命名的小写英文子目录，并把 skillContext 写入其中的 SKILL.md。"
+            "SKILL.md 会自动补齐符合 Agent Skills 规范的 YAML Frontmatter（name 与 "
+            "description）；正文为空时返回错误，同名 Skill 已存在时只返回提示、绝不覆盖。"
+            "若还需要 references/、scripts/ 等附属目录或其他文件，请继续调用文件工具创建。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "Skill 名称，统一使用小写英文：只允许字母、数字与单个连字符"
+                        "（kebab-case，例如 pdf-tools）。中文名或大写会被自动规范，"
+                        "无法规范时返回错误提示。"
+                    ),
+                },
+                "skillContext": {
+                    "type": "string",
+                    "description": (
+                        "要写入 SKILL.md 的完整内容（Markdown）。可以自带 YAML "
+                        "Frontmatter——其中的 name 会被改成本次的小写英文名称，缺少 "
+                        "description 时从正文首段自动补一句；也可以只给正文部分。"
+                    ),
+                },
+            },
+            "required": ["name", "skillContext"],
+        },
+        handler=handler,
+    )
+
+
+def normalize_skill_name(raw: Any) -> str | None:
+    """把用户给的名字规范成 Agent Skills 的 kebab-case；规范不了返回 None。"""
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip().lower()
+    if not text:
+        return None
+    # 空格、下划线与路径分隔符视为分词；其余非法字符（含中文、标点）直接丢弃
+    text = re.sub(r"[\s_/\\]+", "-", text)
+    text = re.sub(r"[^a-z0-9-]+", "", text)
+    text = re.sub(r"-{2,}", "-", text).strip("-")
+    if not text:
+        return None
+    text = text[:SKILL_NAME_MAX_LENGTH].strip("-")
+    if not text or not SKILL_NAME_PATTERN.match(text):
+        return None
+    return text
+
+
+# --- createSkill：SKILL.md 生成 ---
+
+
+def build_skill_document(
+    slug: str, skill_context: Any
+) -> tuple[str, dict[str, str], str]:
+    """把 skillContext 整理成规范的 SKILL.md 文本。
+
+    返回 \`(完整文件内容, frontmatter 字段, 正文)\`。已有的 YAML Frontmatter 会被
+    保留（name / description 之外的键原样留下），name 强制写成本次的小写英文名，
+    description 缺失时从正文推导。正文为空时第三项是空串，由调用方拒绝写入。
+    """
+    raw = "" if skill_context is None else str(skill_context)
+    raw = raw.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+    kept, fields, body_lines = _split_frontmatter(raw.split("\n"))
+
+    while body_lines and not body_lines[0].strip():
+        body_lines.pop(0)
+    body = "\n".join(body_lines).rstrip()
+
+    description = (fields.get("description") or "").strip()
+    if not description:
+        description = _derive_description(body)
+
+    lines = ["---", "name: %s" % slug]
+    lines.extend(_frontmatter_lines("description", description))
+    lines.extend(item for item in kept if item.strip())
+    lines.append("---")
+    lines.append("")
+    document = "\n".join(lines) + "\n"
+    if body:
+        document += body + "\n"
+    return document, {"name": slug, "description": description}, body
+
+
+def _split_frontmatter(lines: list[str]) -> tuple[list[str], dict[str, str], list[str]]:
+    """拆出 \`(保留的 frontmatter 原行, 已解析字段, 正文行)\`。
+
+    没有成对 --- 包裹时整段按正文处理，由调用方补上完整 Frontmatter。
+    """
+    if not lines or lines[0].strip() != "---":
+        return [], {}, list(lines)
+    end = None
+    for index in range(1, len(lines)):
+        if lines[index].strip() in ("---", "..."):
+            end = index
+            break
+    if end is None:
+        return [], {}, list(lines)
+
+    block = lines[1:end]
+    body = list(lines[end + 1 :])
+    fields = parse_frontmatter("\n".join(lines[: end + 1])) or {}
+
+    kept: list[str] = []
+    dropping_block_scalar = False
+    for line in block:
+        stripped = line.strip()
+        indented = bool(line[:1].isspace())
+        if dropping_block_scalar:
+            if not stripped or indented:
+                continue  # 块标量的续行随该键一起丢掉，稍后用规范写法重出
+            dropping_block_scalar = False
+        if indented:
+            kept.append(line)  # 嵌套映射等附属行，原样保留
+            continue
+        if not stripped or stripped.startswith("#"):
+            kept.append(line)
+            continue
+        key, separator, rest = line.partition(":")
+        if separator and key.strip().lower() in ("name", "description"):
+            if rest.strip() in ("|", "|-", "|+", ">", ">-", ">+"):
+                dropping_block_scalar = True
+            continue
+        kept.append(line)
+    return kept, fields, body
+
+
+def _frontmatter_lines(key: str, value: str) -> list[str]:
+    """把一个字段写成合法 YAML：简单标量一行搞定，复杂值用折叠块标量。"""
+    text = " ".join((value or "").split())
+    if not text:
+        text = "由 createSkill 创建的 Skill，请补充说明。"
+    if _is_plain_scalar_safe(text):
+        return ["%s: %s" % (key, text)]
+    return ["%s: >-" % key, "  %s" % text]
+
+
+def _is_plain_scalar_safe(text: str) -> bool:
+    if text[:1] in ("- ", "? ", "& ", "*", "!", "%",  "@", "`", '"', "'", "{", "[", "|", ">"):
+        return False
+    if text.endswith(":") or ": " in text or "#" in text:
+        return False
+    return bool(_PLAIN_SCALAR_SAFE.match(text))
+
+
+def _derive_description(body: str) -> str:
+    """正文没写 description 时，取第一段可读文字充当描述。"""
+    for line in body.splitlines():
+        text = line.strip()
+        if not text or set(text) <= set("-=*_#"):
+            continue
+        # 去掉标题符号、引用符号与有序 / 无序列表符号
+        text = re.sub(r"^(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+\.\s+)", "", text)
+        text = re.sub(r"[*_\`\"]", "", text).strip()
+        if not text:
+            continue
+        if len(text) > DERIVED_DESCRIPTION_MAX_CHARS:
+            text = text[:DERIVED_DESCRIPTION_MAX_CHARS].rstrip() + "…"
+        return text
+    return "由 createSkill 创建的 Skill，请补充 description 与正文说明。"
+
+
+def _list_files(directory: Path, limit: int = 20) -> list[str]:
+    """已存在 Skill 目录内的文件清单（相对该目录），便于判断该改而不是新建。"""
+    names: list[str] = []
+    try:
+        for item in sorted(directory.rglob("*"), key=str):
+            if item.is_file():
+                names.append(_display(directory, item))
+                if len(names) >= limit:
+                    break
+    except OSError:
+        return names
+    return names
+
+
+def _remove_quietly(directory: Path) -> None:
+    """写入失败时清掉刚建的空目录，不留半成品。"""
+    shutil.rmtree(directory, ignore_errors=True)
+
+
 
 
 def parse_frontmatter(text: str) -> dict[str, str] | None:

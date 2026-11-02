@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 SYSTEM_PROMPT = "回答简洁，减少副词，不用 emoji。"
-# 单次回复的输出上限。512 太容易把稍长的回答截断，这里放宽到 1024；
+# 单次回复的输出上限（含 Function Calling 的参数）。
+# 1024 会连带截断 tool_call 的参数 JSON——模型写长文件时参数写到一半被砍断，
+# 得到的就是「工具参数不是合法 JSON：Unterminated string」。放宽到 4096。
 # 仍被截断时 session 会在结尾提示“达到输出上限”，可以接着说“继续”。
-MAX_TOKENS = 1024
+MAX_TOKENS = 4096
 
 # 保留的上下文轮数：每轮 = 一次提问 + 一次回答
 HISTORY_TURNS = 10
 
 # 单轮内允许的连续工具调用轮数上限，防止模型反复调用死循环。
 # 这是“轮”不是“次”：模型一次回复里并发 3 个工具仍然只算 1 轮。
-# 25 轮足够覆盖查资料、看目录、读文件这类正常任务；触顶时不再报错中止，
+# 40 轮足够覆盖查资料、写文件、调外部 CLI 的文档生成任务；触顶时不再报错中止，
 # 而是把已产生的回答保留下来，用户可以接着追问。
-MAX_TOOL_ROUNDS = 25
+MAX_TOOL_ROUNDS = 40
 
 # 同一个工具 + 同一组参数连续被调用这么多次，就判定模型在原地打转
 MAX_REPEATED_TOOL_CALLS = 3
@@ -39,3 +41,9 @@ FETCH_USER_AGENT = (
 CLI_TIMEOUT = 30.0
 CLI_MAX_TIMEOUT = 120.0
 CLI_MAX_OUTPUT = 8000
+
+# MCP：配置文件默认名、连接/初始化超时、单次工具调用超时与回填上下文的上限
+MCP_CONFIG_FILENAME = ".mcp.json"
+MCP_CONNECT_TIMEOUT = 10.0
+MCP_CALL_TIMEOUT = 30.0
+MCP_MAX_OUTPUT = 20000

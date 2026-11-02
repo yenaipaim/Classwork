@@ -10,9 +10,15 @@ from typing import Sequence
 
 from .config import AppConfig
 from .llm.backend import LlmBackend, OpenAIBackend
+from .mcp import McpConfig, McpHub, discover_mcp_config, load_mcp_config
 from .paths import DEFAULT_HISTORY_DIR, DEFAULT_WORKSPACE_ROOT
 from .session import AgentSession
-from .skills import SkillLibrary, build_load_skill_tool, resolve_skill_roots
+from .skills import (
+    SkillLibrary,
+    build_create_skill_tool,
+    build_load_skill_tool,
+    resolve_skill_roots,
+)
 from .tools.builtins import get_date, is_leap_year
 from .tools.cli import CommandRunner, build_cli_tool
 from .tools.files import FileToolbox
@@ -29,10 +35,13 @@ def build_registry(
     fetcher: WebFetcher | None = None,
     cli_runner: CommandRunner | None = None,
     skills: SkillLibrary | None = None,
+    mcp: McpHub | None = None,
 ) -> ToolRegistry:
-    """按旧版顺序注册文件/计算工具，末尾追加联网、网页、命令行、技能与工具清单。
+    """按旧版顺序注册文件/计算工具，末尾追加联网、网页、命令行、技能、MCP 与工具清单。
 
-    ``skills`` 非空时追加 ``loadSkill`` 工具；为空或未传时注册表与旧版完全一致。
+    ``skills`` 非空时追加 ``loadSkill``（按需加载）与 ``createSkill``（新建技能）
+    两个工具；``mcp`` 非空时把已连接的 MCP 工具追加在技能之后。``list_tools``
+    始终最后注册，才能把前面的工具都列进去。
     """
     registry = ToolRegistry()
     registry.register(
@@ -69,8 +78,15 @@ def build_registry(
             else CommandRunner(cwd=str(workspace_root))
         )
     )
-    if skills:
-        registry.register(build_load_skill_tool(skills))
+    # 技能工具只在有 SkillLibrary 时注册；createSkill 连「一个技能都还没有」的空库也
+    # 要可用——新建第一个技能正是它最有用武之地的时候。
+    if skills is not None:
+        if skills:
+            registry.register(build_load_skill_tool(skills))
+        registry.register(build_create_skill_tool(skills))
+    # MCP 工具排在技能之后、list_tools 之前；连不上的 Server 已在 hub 里被跳过
+    if mcp is not None:
+        mcp.register_into(registry)
     registry.register(
         ToolSpec(
             name="list_tools",
@@ -92,12 +108,18 @@ def create_session(
     project_root: Path | str | None = None,
     skills: SkillLibrary | None = None,
     skill_roots: Sequence[str] | None = None,
+    mcp_config: McpConfig | Path | str | None = None,
+    mcp: McpHub | None = None,
 ) -> AgentSession:
-    """装配一个可直接驱动的会话；测试可注入 backend / registry / skills。
+    """装配一个可直接驱动的会话；测试可注入 backend / registry / skills / MCP。
 
     ``project_root`` 默认取程序启动时的工作目录，Skill 扫描根固定跟随它，不受
     运行中切换工作区的影响。扫描根默认是 ``<project_root>/.agents/skills/``，也可
     由 ``config.ini`` 的 ``[skills] roots`` 或 ``skill_roots`` 追加/替换。
+
+    MCP 来自 ``<project_root>/.mcp.json``（可用 ``YENAI_MCP_CONFIG`` 指定别的
+    文件或设为 off 关闭）：``mcp_config`` 可直接给已解析的 :class:`McpConfig`
+    或文件路径，``mcp`` 则用于注入现成的 :class:`McpHub`（测试与复用）。
     """
     if backend is None:
         backend = OpenAIBackend(
@@ -116,8 +138,17 @@ def create_session(
         configured = tuple(skill_roots) if skill_roots else tuple(config.skill_roots)
         skills = SkillLibrary(base, roots=resolve_skill_roots(base, configured))
 
+    # MCP 连接与配置只在会话创建时建立一次；切换工作区重建注册表时复用同一批会话
+    hub = mcp
+    if hub is None:
+        parsed = _resolve_mcp_config(mcp_config, project_root)
+        hub = McpHub(parsed)
+        hub.start()
+
     def registry_factory(root: Path | str) -> ToolRegistry:
-        return build_registry(root, search_client=search_client, skills=skills)
+        return build_registry(
+            root, search_client=search_client, skills=skills, mcp=hub
+        )
 
     if registry is None:
         registry = registry_factory(workspace_root)
@@ -129,7 +160,24 @@ def create_session(
         transcript,
         registry_factory=registry_factory,
         skills=skills,
+        mcp=hub,
     )
+
+
+def _resolve_mcp_config(
+    source: McpConfig | Path | str | None,
+    project_root: Path | str | None,
+) -> McpConfig:
+    """显式配置优先，否则按项目根目录发现 ``.mcp.json``。"""
+    if isinstance(source, McpConfig):
+        return source
+    if source is None:
+        return discover_mcp_config(project_root)
+    path = Path(source).expanduser()
+    if not path.is_absolute():
+        base = Path(project_root) if project_root is not None else Path.cwd()
+        path = base / path
+    return load_mcp_config(path)
 
 
 def _list_tools(registry: ToolRegistry) -> dict:

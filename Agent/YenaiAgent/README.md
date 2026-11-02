@@ -16,10 +16,11 @@ YenaiAgent/
 │   ├── events.py         # 一轮问答对外暴露的事件（frozen dataclass）
 │   ├── factory.py        # 唯一装配点：create_session(...)
 │   ├── paths.py          # 包根、默认配置、默认存档目录、默认沙箱根
-│   ├── skills.py         # Agent Skills：SKILL.md 扫描、清单注入、loadSkill 工具
+│   ├── skills.py         # Agent Skills：SKILL.md 扫描、清单注入、loadSkill / createSkill
 │   ├── session.py        # AgentSession / CancelToken：流式、工具循环、存档提交
 │   ├── transcript.py     # chat_history/*.txt 存档（格式与旧版一致）
 │   ├── llm/              # 后端协议、请求/流式块类型、工具调用收集器
+│   ├── mcp/              # MCP 客户端：.mcp.json 解析、连接（stdio / HTTP / SSE）、工具注册
 │   └── tools/            # ToolSpec / ToolRegistry / 内置工具 / 文件工具（沙箱根注入）
 ├── tui/                  # 终端界面层：只做输入、展示与命令
 │   ├── app.py            # YenaiApp：线程模型、流式刷新、斜杠命令
@@ -32,11 +33,13 @@ YenaiAgent/
 ├── main.py               # python main.py
 ├── pyproject.toml        # 打包、入口点、pytest 配置
 ├── requirements.txt      # 依赖清单（运行 + 测试，装这一份即可）
+├── .mcp.json             # 本机 MCP Server 配置（PeiHospitalMCP、Bazi-MCP）
 └── architecture.mmd      # 分层与依赖方向图
 ```
 
 `config.ini`、`chat_history/`、本地技能目录 `.agents/` 与各类缓存由**仓库根目录**的
-`.gitignore` 统一忽略，不会提交到仓库。
+`.gitignore` 统一忽略，不会提交到仓库。`.mcp.json` 是示例配置，会进版本库；不要往里写
+密钥（可用 `${环境变量}` 引用），按机器覆盖时用 `YENAI_MCP_CONFIG` 指向别的文件。
 
 ## 分层契约
 
@@ -77,11 +80,11 @@ base_url = https://api.example.com/v1
 api_key = your-key
 model_name = your-model
 
-# 可选：单轮内最多允许的连续工具调用轮数（默认 25）
-max_tool_rounds = 25
+# 可选：单轮内最多允许的连续工具调用轮数（默认 40）
+max_tool_rounds = 40
 
-# 可选：单次回复的输出上限，单位 token（默认 1024）
-max_tokens = 1024
+# 可选：单次回复的输出上限，单位 token（默认 4096；含工具参数，调小会让长文件写入被截断）
+max_tokens = 4096
 
 # 可选：联网搜索工具 searchWeb 使用百度千帆「智能搜索生成」接口
 [search]
@@ -131,7 +134,7 @@ baidu_qianfan_api_key = your-baidu-key
 
 - 状态栏每秒刷新：等待模型时显示「思考中… N 秒（已调用工具 M 次）」，
   工具执行时显示「调用工具：名称 · 已 N 秒（第 M 次）」。数字在走就说明没死。
-- 单轮最多 25 轮工具调用（`[llm] max_tool_rounds` 可调）。到达上限不会丢结果：
+- 单轮最多 40 轮工具调用（`[llm] max_tool_rounds` 可调）。到达上限不会丢结果：
   已经拿到的回答会保留在对话和上下文里，并附一句提示，直接继续追问即可。
 - 模型如果用**完全相同的参数反复调同一个工具**超过 3 次，会自动停下并提示，
   避免在一件事上空转。
@@ -166,7 +169,8 @@ baidu_qianfan_api_key = your-baidu-key
 
 ## 工具
 
-共 17 个，前 13 个的顺序与旧版一致：
+共 18 个（装配了技能库时；不带技能库则为 16 个），前 13 个的顺序与旧版一致；接入 MCP
+Server 时，每个 Server 的工具会在 `list_tools` 之前**动态追加**，不占下面的固定编号：
 
 1. `get_date`：当前本地日期、时间、星期（纯 Python，不依赖 `date` 命令）
 2. `isLeapyear`：闰年判断
@@ -182,9 +186,14 @@ baidu_qianfan_api_key = your-baidu-key
 12. `rename_path`
 13. `searchWeb`：联网搜索（百度千帆「智能搜索生成」接口，返回标题、链接、日期、摘要）
 14. `fetchWeb`：读取网页正文（本地 `curl` 下载 + `trafilatura` 转 Markdown）
-15. `RunCli`：执行本机命令行程序，返回退出码、stdout、stderr
+15. `RunCli`：执行本机命令行程序，返回退出码、stdout、stderr。Windows 下会把子进程的
+    `TMP`/`TEMP` 指到工作区内的 `.cli-tmp`（部分 CLI 写系统临时目录会被拒绝）
 16. `loadSkill`：加载 Agent Skills 技能的 `SKILL.md` 或技能目录内的其他文件（见「技能」）
-17. `list_tools`：列出所有工具
+17. `createSkill`：按自然语言要求新建 Agent Skills 技能，生成规范的 `SKILL.md`（见「技能」）
+18. `list_tools`：列出所有工具
+
+MCP 工具默认沿用 Server 里的工具名；与本地工具或别的 Server 重名时自动加前缀
+（`工具名` → `服务名__工具名`），仍冲突再补 `_2`、`_3`。
 
 搜索工具的实现约定：
 
@@ -270,21 +279,101 @@ roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
 - 缺 `SKILL.md`、frontmatter 不完整或 `name`/`description` 缺失的目录会被跳过；
   重名时先扫到的生效。跳过原因可通过 `session.skills.skipped` 查看（调试用）。
 
-> 想把自己的技能纳入版本管理，从仓库根 `.gitignore` 删掉 `.agents/` 一行即可。
+### 用 createSkill 新建技能（第九次课）
+
+除了手写文件，也可以直接对 Agent 说「帮我建一个 xxx 技能，内容是……」，
+模型会调用 `createSkill(name, skillContext)` 自己落盘：
+
+| 参数 | 说明 |
+| --- | --- |
+| `name` | 技能名，会规范成 kebab-case：`PDF Tools` → `pdf-tools`，`A_b` → `a-b`；规范不出小写英文名（如纯中文）时返回错误与现有技能清单 |
+| `skillContext` | 写入 `SKILL.md` 的完整内容，可以带 frontmatter（含 `name` / `description`）与正文；不带 frontmatter 时自动补一份 |
+
+- 目录建在**第一个技能根**（默认 `.agents/skills/`；根不存在会自动创建），文件名固定 `SKILL.md`。
+- `name` 以目录名为准重写；`description` 缺省时取正文第一条可读文字（去掉 `#`、
+  `- `、`1. ` 等前缀，最多 200 字）；含 `: ` 等会破坏 YAML 的值自动用 `>-` 折叠块。
+- 模型自带的其他 frontmatter 键（`license`、`metadata` 等）原样保留，嵌套块不丢。
+- 建完立刻 `_register` 进技能库：同一会话的下一轮 System Prompt 就带它，`loadSkill` 也能读，
+  **不需要重启**。
+- 目标技能已存在时不覆盖：返回 `ok=false`、中文「已存在」提示与现有文件清单
+  （已登记的同名技能、以及「目录在但缺 `SKILL.md`」的半成品目录都算）；
+  跨技能根重名同样拒绝。名称非法或正文为空时不会留下任何目录。
+- `references/`、`scripts/` 等附属文件不由此工具生成，仍由模型调用文件工具补齐。
+
+## MCP（Model Context Protocol）
+
+启动时读取「当前项目根目录」下的 `.mcp.json`，连上后把每个 Server 的 `list_tools()`
+结果注册进同一个工具注册表——模型看到的就是普通 Function Calling，调用时由客户端
+转发到对应 Server，文本、结构化结果和错误原样交回。
+
+配置文件的查找顺序（只加载先找到的一份）：
+
+1. 环境变量 `YENAI_MCP_CONFIG` 指向的文件（相对路径按项目根解析；设为 `off` 可整体
+   关闭 MCP，测试就是用它隔离的）；
+2. `<项目根>/.mcp.json`（默认就是本仓库的 `Agent/YenaiAgent/.mcp.json`）；
+3. 包目录下的 `.mcp.json`；
+4. 仓库根目录的 `.mcp.json`（方便从仓库根目录启动 `python Agent/YenaiAgent/main.py`）。
+
+格式与 Claude Desktop / Cursor 的 `mcpServers` 兼容：
+
+```json
+{
+  "mcpServers": {
+    "PeiHospitalMCP": {
+      "type": "streamable_http",
+      "url": "http://127.0.0.1:9000/mcp",
+      "connect_timeout": 5,
+      "timeout": 30
+    },
+    "Bazi-MCP": {
+      "type": "streamable_http",
+      "url": "https://mcp.api-inference.modelscope.net/c996e9ed3d9e4b/mcp"
+    },
+    "local-tools": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["D:\\mcp\\server.py"],
+      "env": {"TOKEN": "${MY_TOKEN}"}
+    }
+  }
+}
+```
+
+- `type`：`stdio`（配 `command` / `args` / `env` / `cwd`）、`streamable_http`（配 `url`，
+  也可写 `http`）、`sse`（配 `url`，旧版 SSE）；缺省时按 `url` / `command` 推断，
+  `url` 以 `/sse` 结尾按 SSE 处理。
+- `headers` 用于 HTTP Server 的鉴权；`${VAR}` 会替换成本机环境变量，变量缺失直接报错。
+- `enabled: false`（或 `disabled: true`）保留配置但不连接；`connect_timeout`（默认 10 秒）、
+  `timeout`（单次调用，默认 30 秒）、`max_output`（默认 2 万字）可按 Server 覆盖。
+- 单个 Server 写错只会进 `/mcp` 的「配置问题」列表，不影响其他 Server。
+- 连不上会在启动摘要和 `/mcp` 里显示失败原因（该 Server 的工具返回 `ok=false` 的结果），
+  本地工具与其他 Server 照常可用；各 Server 并行连接，启动最多等 `connect_timeout` 秒。
+- `/mcp` 可查看每个 Server 的传输方式、连接状态、注册工具数与失败原因。
+- OpenAI 兼容接口的函数名只能是 `[A-Za-z0-9_-]`：Server 里的中文工具名会注册成
+  `tool_1`、`tool_2`……，中文原名与描述一起保留，模型按描述挑选。
+- 依赖 `mcp>=2.2,<3`；stdio Server 是普通子进程，退出时随会话一起关闭。
+- 示例里的 `PeiHospitalMCP`（`Pet/` 里的宠物医院 MCP）默认监听 9000 端口，需要先跑起来，否则启动摘要会显示
+  连接失败——不影响其他功能；服务起来后重启 YenaiAgent 即自动接入。
 
 ## 开发与测试
 
 ```bash
 pip install -r requirements.txt   # 运行依赖与测试依赖都在这一份里
-pytest tests -q          # 当前 158 个用例，约 12 秒
+pytest tests -q          # 当前 182 个用例，约 20 秒
 ```
 
 - 网络完全用 `tests/support.py` 里的 `FakeBackend` 脚本化替身，不发起真实请求；
   搜索与抓取工具也通过注入假 transport / 假 curl 测试，跑测试不需要联网。
 - `tests/test_layers.py` 校验分层：`core` 不得 import `textual/rich/tui`，也不得做进程级 IO。
+- `tests/test_mcp.py` 覆盖 `.mcp.json` 解析（stdio / HTTP、坏条目、缺失文件、`disabled`
+  占位、`${VAR}` 展开）、配置发现与 `YENAI_MCP_CONFIG=off`、工具重名加前缀、`ToolOutcome`
+  透传，以及一个真实 stdio MCP Server（`mcp.server.mcpserver.MCPServer`，1.x 回退
+  `FastMCP`）的 list / call 往返和「坏 Server 不影响本地工具」的隔离场景；
+  `tests/conftest.py` 里 autouse 地关掉 MCP，测试不连真实服务。
 - `tests/test_skills.py` 覆盖技能发现与跳过规则、frontmatter 解析、清单注入与
   `loadSkill` 的路径解析 / 沙箱拒绝场景，以及多根扫描、重名去重与 `[skills]`
-  配置解析。
+  配置解析；`createSkill` 部分覆盖名称规范化、`SKILL.md` 生成（frontmatter 可回读、
+  正文保留、LF 无 BOM）、缺根自动创建、已存在不覆盖、跨根重名拒绝与端到端调用。
 - TUI 用 Textual 的 `run_test` 无头驱动，覆盖流式渲染、消息卡片与工具卡片（含耗时、
   参数/结果分节、点击折叠）、错误提示、命令、首次配置页，以及「回复必须逐块出现」
   的流式回归测试（慢速后端断言中间态）。
@@ -303,8 +392,12 @@ pytest tests -q          # 当前 158 个用例，约 12 秒
 - 新增 Agent Skills：技能目录（默认 `.agents/skills/`，可配置多个根）里的技能按
   `SKILL.md` frontmatter 自动登记，清单进 System Prompt，正文按需经 `loadSkill`
   加载（Practice02 没有的能力）。
-- 工具从 13 个扩展到 16 个：新增 `searchWeb`（联网搜索）、`fetchWeb`（抓网页）、
-  `RunCli`（执行本地命令行），仍然全部通过注册表统一描述、执行与错误归一。
+- 工具从 13 个扩展到 18 个：新增 `searchWeb`（联网搜索）、`fetchWeb`（抓网页）、
+  `RunCli`（执行本地命令行）、`loadSkill` / `createSkill`（技能加载与创建），
+  仍然全部通过注册表统一描述、执行与错误归一。
+- 新增 MCP 客户端：`.mcp.json` 里的 Server 启动时连接，`list_tools()` 的结果动态注册成
+  工具，调用经 stdio / Streamable HTTP / SSE 转发；连不上只影响该 Server
+  （Practice02 没有的能力）。
 
 ## 后续扩展
 

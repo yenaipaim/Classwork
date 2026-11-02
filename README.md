@@ -16,7 +16,7 @@ Anything/
 ├── LLM_UPLOAD_MCP/         ← 第三次课：AnythingLLM 文档上传页
 ├── Agent/Practice01/       ← 第四次课：多轮对话命令行工具
 ├── Agent/Practice02/       ← 第五次课：本地文件操作工具扩展
-└── Agent/YenaiAgent/       ← 第六~八次课：core/TUI 分层重构 + Agent Skills 技能加载
+└── Agent/YenaiAgent/       ← 第六~十次课：core/TUI 分层 + Agent Skills + MCP 客户端
 ```
 
 | 目录 | 课程 | 简介 | 启动方式 |
@@ -26,7 +26,7 @@ Anything/
 | [LLM_UPLOAD_MCP/](LLM_UPLOAD_MCP/README.md) | 第 3 次 | 文档上传 & 嵌入 AnythingLLM 的网页 | 浏览器直接打开 `index.html` |
 | [Agent/Practice01/](Agent/Practice01/README.md) | 第 4 次 | 多轮对话 CLI（流式输出 · 终端转圈动画） | `python main.py` |
 | [Agent/Practice02/](Agent/Practice02/README.md) | 第 5 次 | 多轮对话 CLI + 13 个工具（含 10 个本地文件操作） | `python Agent\Practice02\main.py` |
-| [Agent/YenaiAgent/](Agent/YenaiAgent/README.md) | 第 6-8 次 | core + tui 分层：Textual 界面、17 个工具、可切换工作区、Agent Skills 技能加载 | `python Agent\YenaiAgent\main.py` |
+| [Agent/YenaiAgent/](Agent/YenaiAgent/README.md) | 第 6-10 次 | core + tui 分层：Textual 界面、18 个本地工具 + MCP 动态工具、可切换工作区、Agent Skills 技能加载与创建 | `python Agent\YenaiAgent\main.py` |
 
 ---
 
@@ -344,12 +344,13 @@ Agent/Practice02/
 
 ---
 
-## Agent/YenaiAgent — 分层重构 TUI 版（第六~八次课）
+## Agent/YenaiAgent — 分层重构 TUI 版（第六~十次课）
 
 > 把 Practice02 重构为 **core + tui** 两层：对话、工具、会话、存档全部收进 `core/`，
 > 终端界面换成 **Textual**，后续 Web / Desktop 可直接复用同一套 core。
-> 工具 17 个：日期 / 闰年、10 个文件工具、联网搜索 `searchWeb`、网页抓取 `fetchWeb`、
-> 本地命令行 `RunCli`、技能加载 `loadSkill`，外加工具清单。
+> 第十次课接入 **MCP 客户端**：启动时读 `.mcp.json`，把外部 MCP Server 的工具注册成普通
+> 函数工具。工具 18 个：日期 / 闰年、10 个文件工具、联网搜索 `searchWeb`、网页抓取 `fetchWeb`、
+> 本地命令行 `RunCli`、技能加载 `loadSkill`、技能创建 `createSkill`，外加工具清单。
 
 ```powershell
 python Agent\YenaiAgent\main.py
@@ -360,8 +361,8 @@ python Agent\YenaiAgent\main.py
 
 ```ini
 [llm]
-max_tool_rounds = 25      # 单轮工具调用轮数上限（默认 25，触顶保留结果不报错）
-max_tokens = 1024         # 单次回复输出上限（被截断时回答末尾会提示）
+max_tool_rounds = 40      # 单轮工具调用轮数上限（默认 40，触顶保留结果不报错）
+max_tokens = 4096         # 单次回复输出上限（被截断时回答末尾会提示）
 
 [search]                  # searchWeb 联网搜索（百度千帆），缺省则搜索返回“未配置”提示
 baidu_qianfan_api_key = your-key
@@ -391,7 +392,7 @@ roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
 - 状态栏：就绪 / 思考中（带等待秒数与工具调用次数）/ 工具运行 / 正在中断
 - 输入框：多行编辑，`Enter` 发送，`Ctrl+J` 换行（增强键盘终端也可用 `Shift+Enter`）
 - 快捷键：`Ctrl+Q` 退出，`Ctrl+C` 中断当前回复（空闲时退出），`Ctrl+L` 清屏
-- 命令：`/help` `/clear` `/reset` `/config` `/model` `/workspace` `/skills` `/exit`
+- 命令：`/help` `/clear` `/reset` `/config` `/model` `/workspace` `/skills` `/mcp` `/exit`
 - 工作区：默认为项目目录，`--workspace` 启动指定或 `/workspace` 运行时切换；
   决定文件工具沙箱与 `RunCli` 的工作目录，切换时保留上下文
 - 稳定性：状态栏每秒显示等待秒数与工具调用次数；模型空响应、请求失败会明确报错，
@@ -417,6 +418,43 @@ roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
 
 完整约定见 [Agent/YenaiAgent/README.md](Agent/YenaiAgent/README.md) 的「技能（Agent Skills）」一节。
 
+### Skill 创建工具 createSkill（第九次课）
+
+前八次课只能「读取已有的技能」，这一课把技能从「手写文件」变成「对话里让 Agent 自己建」：
+
+- 新增 Function Calling 工具 `createSkill(name, skillContext)`。`name` 是技能名，
+  `skillContext` 是要写进 `SKILL.md` 的完整内容（frontmatter + 正文）。
+- 工具在第一个技能根目录（默认 `.agents/skills/`）下建出 `name` 对应的子目录与
+  `SKILL.md`，当轮即登记进技能清单，同一会话马上能用 `loadSkill` 读到，无需重启。
+- 技能名统一规范成 Agent Skills 推荐的 kebab-case（小写字母、数字、单个连字符）：
+  模型给 `PDF Tools` 会落成 `pdf-tools`；纯中文名无法规范时直接返回错误与可用名单。
+- 生成的文件符合 Agent Skills 规范：YAML frontmatter 固定带 `name` 与 `description`，
+  `name` 以目录名为准；`description` 缺省时从正文第一条可读文字推导；值里有 `: `、
+  以 `-`/`>` 开头等容易破坏 YAML 的情况自动改用折叠块标量；模型自带的其他
+  frontmatter 键（如 `license`、`metadata`）原样保留。
+- 目标技能已存在（不管是已登记的，还是目录在但缺 `SKILL.md`）一律返回
+  `ok=false` 与「已存在」提示，附带现有文件清单，不覆盖任何字节；跨技能根重名同样拒绝。
+- `references/`、`scripts/` 等附属文件不由 `createSkill` 生成，仍由模型继续调用
+  `create_file`、`edit_text_file` 等文件工具补齐。
+
+### MCP 客户端（第十次课）
+
+- 启动时读取「当前项目根目录」下的 `.mcp.json`，支持 `stdio`、`streamable_http`（Streamable
+  HTTP）与 `sse` 三种传输；查找顺序：环境变量 `YENAI_MCP_CONFIG` → 项目根 `.mcp.json` →
+  包目录 → 仓库根，设为 `off` 可整体关闭。
+- 连上后调用 `list_tools()`，把工具名、描述、参数 Schema 转成 `ToolSpec` 注册进同一个注册表
+  （排在本地工具之后），模型看到的就是普通 Function Calling；调用时按内部映射找回 Server 与
+  原名，文本、结构化结果、错误原样返回。
+- 工具名与本地工具或其它 Server 撞名时自动加 `<Server>__<工具>` 前缀；OpenAI 兼容接口只允许
+  ASCII 函数名，纯中文的工具名注册成 `tool_1`、`tool_2`…，中文原名写进描述，模型按描述挑选。
+- 单个 Server 配置写错或连不上只影响它自己：启动摘要与 `/mcp` 显示原因，本地工具和其他
+  Server 照常可用；stdio Server 随会话退出关闭。
+- 本仓库的 `.mcp.json` 已配好两个 Server：`PeiHospitalMCP`（`Pet` 的宠物医院 MCP，
+  `http://127.0.0.1:9000/mcp`，28 个工具）与 `Bazi-MCP`（ModelScope 上的八字排盘服务，3 个工具）。
+
+完整格式与字段说明见 [Agent/YenaiAgent/README.md](Agent/YenaiAgent/README.md) 的
+「MCP（Model Context Protocol）」一节。
+
 ### 测试
 
 ```powershell
@@ -425,8 +463,9 @@ python -m pytest tests -q
 ```
 
 覆盖配置读写、上下文裁剪、工具注册表、文件沙箱越界与工作区切换、会话事件流、
-存档格式、Skill 发现与加载（含多根扫描与 `[skills]` 配置）、分层约束（core 不得依赖 UI）
-以及 TUI 无头测试，当前 158 个用例。
+存档格式、Skill 发现与加载（含多根扫描与 `[skills]` 配置）、`createSkill` 的名称规范化
+与 `SKILL.md` 生成（含已存在不覆盖）、MCP 配置解析与命名、真实 stdio MCP Server 的
+list / call 往返，分层约束（core 不得依赖 UI）以及 TUI 无头测试，当前 182 个用例。
 
 跑测试先装：`pip install pytest pytest-asyncio`（或 `pip install -r Agent\YenaiAgent\requirements.txt` 一次装齐）。
 
@@ -461,7 +500,13 @@ pip install mcp httpx uvicorn openai textual trafilatura
 | `chat_history/` | 每次运行的对话存档 |
 | `.agents/` | YenaiAgent 的 Agent Skills 本地技能目录（默认 `.agents/skills/`） |
 | `data/` | 临时图片与模板 |
+| `.env`、`*.pem`、`*.key` | 环境变量与密钥文件 |
+| `*.log`、`*.tmp`、`*.bak` | 日志与临时备份 |
+| `.DS_Store`、`Thumbs.db`、`.idea/`、`.vscode/` | 系统与编辑器杂项 |
 | `__pycache__/`、`*.py[cod]`、`.pytest_cache/`、`.venv/` | 缓存与虚拟环境 |
+
+> `.mcp.json` 是 MCP 示例配置，随代码提交（不含密钥）；本机需要不同地址时用环境变量
+> `YENAI_MCP_CONFIG` 指向另一份文件，或写成 `.mcp.local.json`（已被忽略）。
 
 已跟踪的文件改 `.gitignore` 不会自动移除，需要用 `git rm --cached <文件>` 解除跟踪。
 （`Pet/web/config.json` 已按此处理，本地文件保留。）
