@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Iterator, Protocol
+from typing import Any, Iterator, Protocol
 
 from openai import OpenAI
 
@@ -32,14 +32,22 @@ class OpenAIBackend:
             ) from exc
 
     def stream(self, request: LlmRequest) -> Iterator[LlmChunk]:
+        """按需开启 usage 上报：拿得到真实 token 用量就不必估算。"""
         try:
-            stream = self._client.chat.completions.create(
-                model=request.model,
-                messages=list(request.messages),
-                max_tokens=request.max_tokens,
-                stream=True,
-                tools=list(request.tools),
-            )
+            stream = self._open(request, with_usage=True)
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            # 少数兼容接口不认 stream_options：去掉再试一次，不影响正常对话
+            if "stream_options" not in str(exc).lower():
+                raise LlmRequestError(ErrorCode.REQUEST_FAILED, str(exc)) from exc
+            try:
+                stream = self._open(request, with_usage=False)
+            except Exception as fallback:
+                raise LlmRequestError(
+                    ErrorCode.REQUEST_FAILED, str(fallback)
+                ) from fallback
+        try:
             for chunk in stream:
                 yield _to_chunk(chunk)
         except KeyboardInterrupt:
@@ -47,16 +55,32 @@ class OpenAIBackend:
         except Exception as exc:
             raise LlmRequestError(ErrorCode.REQUEST_FAILED, str(exc)) from exc
 
+    def _open(self, request: LlmRequest, with_usage: bool):
+        params: dict[str, Any] = {
+            "model": request.model,
+            "messages": list(request.messages),
+            "max_tokens": request.max_tokens,
+            "stream": True,
+        }
+        # 压缩请求不带任何工具；空列表会让部分接口报 400，所以干脆不传这个字段
+        if request.tools:
+            params["tools"] = list(request.tools)
+        if with_usage:
+            params["stream_options"] = {"include_usage": True}
+        return self._client.chat.completions.create(**params)
+
 
 def _to_chunk(chunk) -> LlmChunk:
     """把 SDK 的 chunk 归一化成 :class:`LlmChunk`。"""
+    usage = _usage_tokens(chunk)
     choices = getattr(chunk, "choices", None) or []
     if not choices:
-        return LlmChunk()
+        # 开了 include_usage 后，末尾会多一个只带 usage、choices 为空的分片
+        return LlmChunk(usage_tokens=usage)
 
     delta = getattr(choices[0], "delta", None)
     if delta is None:
-        return LlmChunk()
+        return LlmChunk(usage_tokens=usage)
 
     calls: list[ToolCallDelta] = []
     for call in getattr(delta, "tool_calls", None) or []:
@@ -77,7 +101,20 @@ def _to_chunk(chunk) -> LlmChunk:
         content=getattr(delta, "content", None),
         tool_calls=tuple(calls),
         finish_reason=_finish_reason(chunk),
+        usage_tokens=usage,
     )
+
+
+def _usage_tokens(chunk) -> int | None:
+    """读取本次请求的 prompt token 数；字段缺失或为 0 时返回 None。"""
+    usage = getattr(chunk, "usage", None)
+    if usage is None:
+        return None
+    for name in ("prompt_tokens", "input_tokens", "total_tokens"):
+        value = getattr(usage, name, None)
+        if isinstance(value, int) and value > 0:
+            return value
+    return None
 
 
 def _finish_reason(chunk: Any) -> str | None:

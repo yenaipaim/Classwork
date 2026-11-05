@@ -5,14 +5,18 @@ from __future__ import annotations
 import time
 
 import pytest
-from textual.widgets import Input
+from textual.screen import Screen
+from textual.widgets import Input, OptionList, Static
 
 from core.config import ConfigStore
 from core.errors import ErrorCode, LlmRequestError
+from core.sessions import SessionStore
 from core.llm.types import LlmChunk
 from support import FakeBackend, RaisingBackend, text_chunks, tool_script
 from tui.app import YenaiApp
 from tui.screens.config_screen import ConfigScreen
+from tui.screens.first_run_screen import FirstRunScreen
+from tui.screens.session_screen import SessionScreen
 from tui.widgets.chat_input import ChatInput
 
 
@@ -293,32 +297,59 @@ async def test_reply_streams_incrementally(make_session, tmp_path) -> None:
         assert session.history[-1]["content"] == "一二三"
 
 
-async def test_first_run_opens_config_screen_and_builds_session(tmp_path) -> None:
+async def test_first_run_creates_template_and_shows_notice(tmp_path) -> None:
+    """没有 config.ini 时：生成带示例值的完整模板，并弹框提示改完重启。"""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    config_path = tmp_path / "config.ini"
     app = YenaiApp(
-        config_path=tmp_path / "config.ini",
+        config_path=config_path,
         history_dir=tmp_path / "history",
         workspace_root=workspace,
     )
 
     async with app.run_test() as pilot:
-        assert isinstance(app.screen, ConfigScreen)
-        labels = "".join(str(widget.render()) for widget in app.screen.query(".label"))
-        assert "接口地址" in labels
-        assert "API 密钥" in labels
-        assert "模型名称" in labels
+        await pilot.pause()
+        assert isinstance(app.screen, FirstRunScreen)
+        text = "".join(str(widget.render()) for widget in app.screen.query(Static))
+        assert str(config_path) in text
+        assert "重新启动" in text
 
-        app.screen.query_one("#base-url", Input).value = "http://example.test/v1"
-        app.screen.query_one("#api-key", Input).value = "secret"
-        app.screen.query_one("#model-name", Input).value = "test-model"
-        await pilot.click("#save")
+        assert app._session is None
+        assert config_path.is_file()
+        body = config_path.read_text(encoding="utf-8")
+        assert "sk-mock-replace-me" in body
+        for section in ("[llm]", "[context]", "[session]", "[tools]", "[mcp]"):
+            assert section in body
+
+        await pilot.press("escape")
         await pilot.pause()
 
-        assert not isinstance(app.screen, ConfigScreen)
+    assert app._session is None
+
+
+async def test_second_run_reads_template_and_builds_session(tmp_path) -> None:
+    """模板改好后再启动：直接读取配置并建会话，不再弹提示框。"""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config_path = tmp_path / "config.ini"
+    store = ConfigStore(config_path)
+    store.ensure_template()
+    store.save("http://example.test/v1", "secret", "test-model")
+
+    app = YenaiApp(
+        config_path=config_path,
+        history_dir=tmp_path / "history",
+        workspace_root=workspace,
+        backend=FakeBackend(),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert isinstance(app.screen, Screen)
         assert app._session is not None
         assert app._session.config.model_name == "test-model"
-        assert (tmp_path / "config.ini").is_file()
+        assert app._session.config.model_name != "mock-model"
 
 
 def _system_texts(app: YenaiApp) -> list[str]:
@@ -396,3 +427,165 @@ def test_parser_accepts_repeated_skills_dir() -> None:
     assert parser.parse_args([]).skills_dirs is None
     args = parser.parse_args(["--skills-dir", "a", "--skills-dir", "b"])
     assert args.skills_dirs == ["a", "b"]
+
+
+async def test_sidebar_shows_mcp_placeholder(make_session, tmp_path) -> None:
+    """边栏常驻；没有 MCP 配置时给出提示而不是留白。"""
+    app = make_app(make_session(FakeBackend()), tmp_path)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        body = app.query_one("#mcp-sidebar-body", Static)
+        text = str(body.render())
+        assert "MCP" in text
+        assert "未配置" in text
+
+
+async def test_save_command_writes_session_log(make_session, tmp_path) -> None:
+    store = SessionStore(tmp_path / "sessions", "test-model")
+    session = make_session(FakeBackend([text_chunks("好")]), sessions=store)
+    app = make_app(session, tmp_path)
+
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "记录一句")
+        await wait_idle(app, pilot)
+        await submit(app, pilot, "/save")
+
+        assert any("会话已保存" in text for text in _system_texts(app))
+        assert store.path is not None and store.path.is_file()
+        assert store.messages(store.session_id)[-1] == {"role": "assistant", "content": "好"}
+
+
+async def test_new_command_rotates_session_log(make_session, tmp_path) -> None:
+    store = SessionStore(tmp_path / "sessions", "test-model")
+    session = make_session(FakeBackend([text_chunks("好")]), sessions=store)
+    app = make_app(session, tmp_path)
+
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "第一问")
+        await wait_idle(app, pilot)
+        first = store.session_id
+        assert first is not None
+
+        await submit(app, pilot, "/new")
+        await pilot.pause()
+
+        second = store.session_id
+        assert second is not None and second != first
+        assert store.path_for(first).is_file()  # 上一份已保存
+        assert store.path_for(second).is_file()
+        assert session.history == []
+        assert any("已新建会话" in text for text in _system_texts(app))
+
+
+async def test_resume_panel_lists_and_restores_session(make_session, tmp_path) -> None:
+    """斜杠命令 /resume 弹出面板：上下键选择、Enter 恢复。"""
+    old_store = SessionStore(tmp_path / "sessions", "test-model")
+    old_id = old_store.start()
+    old_store.append_message("user", "旧问题的正文")
+    old_store.append_message("assistant", "旧回答")
+
+    store = SessionStore(tmp_path / "sessions", "test-model")
+    store.start()
+    store.append_message("user", "当前会话")
+    session = make_session(FakeBackend(), sessions=store)
+    app = make_app(session, tmp_path)
+
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "/resume")
+        await pilot.pause()
+
+        assert isinstance(app.screen, SessionScreen)
+        options = app.screen.query_one("#session-list", OptionList)
+        assert options.option_count == 2
+        assert "▶" in str(options.get_option_at_index(0).prompt)
+
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert not isinstance(app.screen, SessionScreen)
+        assert session.session_id == old_id
+        assert session.history[0]["content"] == "旧问题的正文"
+        assert any("已恢复会话" in text for text in _system_texts(app))
+
+
+async def test_resume_escape_keeps_current_session(make_session, tmp_path) -> None:
+    """Esc 取消面板，不动当前上下文。"""
+    store = SessionStore(tmp_path / "sessions", "test-model")
+    store.start()
+    store.append_message("user", "当前会话")
+    session = make_session(FakeBackend(), sessions=store)
+    app = make_app(session, tmp_path)
+    current = store.session_id
+
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "/resume")
+        await pilot.pause()
+        assert isinstance(app.screen, SessionScreen)
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not isinstance(app.screen, SessionScreen)
+        assert store.session_id == current
+
+
+async def test_sessions_command_lists_archive(make_session, tmp_path) -> None:
+    store = SessionStore(tmp_path / "sessions", "test-model")
+    store.start()
+    store.append_message("user", "列出来的这一条")
+    session = make_session(FakeBackend(), sessions=store)
+    app = make_app(session, tmp_path)
+
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "/sessions")
+
+        text = "\n".join(_system_texts(app))
+        assert "历史会话" in text
+        assert "列出来的这一条" in text
+        assert "▶" in text
+
+
+async def test_export_command_writes_markdown(make_session, tmp_path) -> None:
+    store = SessionStore(tmp_path / "sessions", "test-model")
+    session = make_session(FakeBackend([text_chunks("好")]), sessions=store)
+    target = tmp_path / "dump"
+    app = make_app(session, tmp_path)
+
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "导出这句")
+        await wait_idle(app, pilot)
+        await submit(app, pilot, "/export %s" % target)
+
+        assert any("会话已导出" in text for text in _system_texts(app))
+        exported = list(target.glob("*.md"))
+        assert exported and "导出这句" in exported[0].read_text(encoding="utf-8")
+
+
+async def test_status_lists_model_and_project_prompt(make_session, workspace, tmp_path) -> None:
+    (workspace / "AGENTS.md").write_text("# 约定\n短回答", encoding="utf-8")
+    store = SessionStore(tmp_path / "sessions", "test-model")
+    session = make_session(FakeBackend(), sessions=store, project_root=workspace)
+    app = make_app(session, tmp_path)
+
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "/status")
+
+        text = "\n".join(_system_texts(app))
+        assert "会话状态" in text
+        assert "test-model" in text
+        assert "上下文" in text
+        assert "已注入项目约定" in text
+        assert "AGENTS.md" in text
+
+
+async def test_tools_command_lists_registry(make_session, tmp_path) -> None:
+    app = make_app(make_session(FakeBackend()), tmp_path)
+
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "/tools")
+
+        text = "\n".join(_system_texts(app))
+        assert "已注册工具" in text
+        assert "read_text_file" in text

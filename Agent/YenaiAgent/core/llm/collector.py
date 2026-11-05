@@ -34,6 +34,8 @@ class TurnCollector:
         self._parts: list[str] = []
         self._calls: dict[int, _PendingCall] = {}
         self.finish_reason: str | None = None
+        # 接口返回的真实用量（prompt tokens）；没有就是 None
+        self.usage_tokens: int | None = None
 
     @property
     def text(self) -> str:
@@ -42,6 +44,8 @@ class TurnCollector:
     def add_chunk(self, chunk: LlmChunk) -> None:
         if chunk.finish_reason:
             self.finish_reason = chunk.finish_reason
+        if chunk.usage_tokens:
+            self.usage_tokens = chunk.usage_tokens
         if chunk.content:
             self._parts.append(chunk.content)
         for delta in chunk.tool_calls:

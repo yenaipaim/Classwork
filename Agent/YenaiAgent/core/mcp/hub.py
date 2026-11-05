@@ -10,6 +10,7 @@ OpenAI 兼容接口只接受 `[A-Za-z0-9_-]`，纯中文的工具名会被替换
 from __future__ import annotations
 
 import re
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
@@ -56,6 +57,10 @@ class McpHub:
         self._connections = [McpConnection(server) for server in config.servers]
         self._mapping: dict[str, tuple[McpConnection, str]] = {}
         self._tools: tuple[McpToolInfo, ...] = ()
+        # 异步加载状态：界面先用空清单启动，连上后由 start_async 置位
+        self._loading = False
+        self._loaded = threading.Event()
+        self._loaded.set()
 
     # ---------------------------------------------------------------- 属性
 
@@ -95,6 +100,43 @@ class McpHub:
         for connection in active:
             remaining = deadline - time.monotonic()
             connection.wait_ready(max(0.0, remaining))
+
+    @property
+    def loading(self) -> bool:
+        """是否正在后台连接（界面据此显示「加载中」）。"""
+        return self._loading
+
+    @property
+    def loaded(self) -> bool:
+        """是否已经尝试过连接（无论成败）。"""
+        return self._loaded.is_set()
+
+    def start_async(self) -> threading.Thread:
+        """后台连接所有 Server：TUI 先进场，连完再刷新边栏与工具表。
+
+        连接本身是阻塞的（子进程握手 / HTTP 初始化），放到后台线程里跑，
+        界面线程就不会卡在启动画面上。
+        """
+        self._loading = True
+        self._loaded.clear()
+        thread = threading.Thread(
+            target=self._start_worker, name="mcp-start", daemon=True
+        )
+        thread.start()
+        return thread
+
+    def _start_worker(self) -> None:
+        try:
+            self.start()
+        except Exception:  # 连接失败由各 connection 记录，这里只保证状态收尾
+            pass
+        finally:
+            self._loading = False
+            self._loaded.set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """等后台连接结束；返回是否已完成。"""
+        return self._loaded.wait(timeout)
 
     def close(self) -> None:
         for connection in self._connections:

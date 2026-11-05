@@ -29,8 +29,13 @@ class ToolCallDelta:
 
 @dataclass(frozen=True, slots=True)
 class LlmChunk:
-    """流式响应的一个分片：正文、工具调用分片，以及结束原因。"""
+    """流式响应的一个分片：正文、工具调用分片、结束原因与 token 用量。
+
+    `usage_tokens` 是本次请求的 prompt token 数（含 System Prompt 与历史）。
+    兼容接口不一定给（不给就是 None），会话层据此决定用真实值还是本地估算。
+    """
 
     content: str | None = None
     tool_calls: tuple[ToolCallDelta, ...] = ()
     finish_reason: str | None = None
+    usage_tokens: int | None = None

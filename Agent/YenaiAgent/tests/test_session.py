@@ -20,6 +20,7 @@ from core.events import (
 from core.factory import build_registry, create_session
 from core.llm.types import LlmChunk
 from core.session import AgentSession, CancelToken
+from core.sessions import SessionStore
 from support import FakeBackend, RaisingBackend, text_chunks, tool_script
 
 
@@ -389,3 +390,61 @@ def test_create_session_wires_up_workspace_switch(tmp_path) -> None:
     assert session.registry.execute(
         "read_text_file", json.dumps({"path": "a.txt"})
     ).ok is False
+
+def test_agents_md_is_injected_once_and_reused(make_session, workspace, tmp_path) -> None:
+    """AGENTS.md 首次加载时并进 System Prompt，之后每轮逐字复用。"""
+    (workspace / "AGENTS.md").write_text("# 项目约定\n用中文回答，先读 README。", encoding="utf-8")
+    backend = FakeBackend([text_chunks("好"), text_chunks("行")])
+    store = SessionStore(tmp_path / "sessions", "test-model")
+    session = make_session(backend, sessions=store, project_root=workspace)
+
+    collect(session, "第一问")
+
+    assert "先读 README" in session.project_prompt
+    first_system = backend.requests[0].messages[0]
+    assert first_system["role"] == "system"
+    assert "先读 README" in first_system["content"]
+    # 对话消息里不该再出现一份，只注入一次
+    assert [m for m in backend.requests[0].messages[1:] if "先读 README" in m["content"]] == []
+
+    collect(session, "第二问")
+
+    assert backend.requests[1].messages[0]["content"] == first_system["content"]
+    events = store.load(store.session_id)
+    assert sum(1 for item in events if item.get("kind") == "agents_md") == 1
+
+
+def test_agents_md_absent_leaves_session_clean(make_session, workspace, tmp_path) -> None:
+    """没有 AGENTS.md 时不注入、不写日志。"""
+    backend = FakeBackend([text_chunks("好")])
+    store = SessionStore(tmp_path / "sessions", "test-model")
+    session = make_session(backend, sessions=store, project_root=workspace)
+
+    collect(session, "你好")
+
+    assert session.project_prompt == ""
+    assert backend.requests[0].messages[0]["content"] == session.config.system_prompt
+    events = store.load(store.session_id)
+    assert all(item.get("kind") != "agents_md" for item in events)
+
+
+def test_agents_md_survives_restore_without_file(make_session, workspace, tmp_path) -> None:
+    """文件删掉后恢复会话，仍从事件日志取回项目约定。"""
+    (workspace / "AGENTS.md").write_text("# 约定\n只改 tests 目录。", encoding="utf-8")
+    store = SessionStore(tmp_path / "sessions", "test-model")
+    session = make_session(FakeBackend([text_chunks("好")]), sessions=store, project_root=workspace)
+    collect(session, "问题")
+    session_id = store.session_id
+    assert session_id is not None
+
+    (workspace / "AGENTS.md").unlink()
+    fresh_store = SessionStore(tmp_path / "sessions", "test-model")
+    backend = FakeBackend([text_chunks("继续")])
+    fresh = make_session(backend, sessions=fresh_store, project_root=workspace)
+
+    fresh.restore(session_id)
+    collect(fresh, "继续")
+
+    assert "只改 tests 目录" in fresh.project_prompt
+    assert "只改 tests 目录" in backend.requests[0].messages[0]["content"]
+

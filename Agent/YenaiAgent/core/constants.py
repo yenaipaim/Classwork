@@ -42,8 +42,28 @@ CLI_TIMEOUT = 30.0
 CLI_MAX_TIMEOUT = 120.0
 CLI_MAX_OUTPUT = 8000
 
+# 上下文压缩：默认窗口大小（拿不到真实窗口时用，并在界面上标注「默认」）、
+# 告警阈值（达到窗口的这个比例就提示用户执行 /compact 并暂停普通输入）、
+# 摘要目标长度与压缩请求自身的输出上限/超时。
+DEFAULT_CONTEXT_WINDOW = 128_000
+CONTEXT_WARN_RATIO = 0.7
+COMPACT_TARGET_TOKENS = 5_000
+COMPACT_MAX_TOKENS = 8_192
+COMPACT_TIMEOUT = 300.0
+# 归档目录：相对项目根，压缩前把原始上下文完整写到这里
+CONTEXT_ARCHIVE_DIR = ".agents/context"
+
 # MCP：配置文件默认名、连接/初始化超时、单次工具调用超时与回填上下文的上限
 MCP_CONFIG_FILENAME = ".mcp.json"
 MCP_CONNECT_TIMEOUT = 10.0
 MCP_CALL_TIMEOUT = 30.0
 MCP_MAX_OUTPUT = 20000
+# 会话事件日志：/new、/resume、/save 用它保存与恢复历史会话
+SESSIONS_DIR = ".agents/sessions"
+SESSION_LOG_VERSION = 1
+# 一次列表/补全最多读多少个会话（按时间倒序）
+SESSION_LIST_LIMIT = 50
+
+# 项目约定文件：会话首次加载时注入一次，之后一直留在历史里复用
+AGENTS_MD_FILENAME = "AGENTS.md"
+AGENTS_MD_MAX_CHARS = 20000

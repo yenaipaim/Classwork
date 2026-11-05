@@ -9,24 +9,31 @@ Web / Desktop 界面时只需再写一个薄薄的适配层。
 ```
 YenaiAgent/
 ├── core/                 # 核心层：不依赖任何界面技术
+│   ├── agentsmd.py       # AGENTS.md 读取与包装：一次注入、全程复用
+│   ├── archive.py        # 原始上下文归档：.agents/context/*.jsonl 与全文检索
+│   ├── budget.py         # 上下文用量：token 估算、窗口大小、占用比例
+│   ├── compaction.py     # 压缩专用 Prompt、历史渲染与摘要拼装
 │   ├── config.py         # AppConfig / ConfigStore（config.ini 读写）
 │   ├── constants.py      # 系统提示词、上下文轮数、工具轮数上限等默认值
 │   ├── context.py        # 消息裁剪：system + 最近 N 轮 + 当前问题
 │   ├── errors.py         # ErrorCode / AgentError / ConfigError / LlmRequestError / ToolError
 │   ├── events.py         # 一轮问答对外暴露的事件（frozen dataclass）
 │   ├── factory.py        # 唯一装配点：create_session(...)
-│   ├── paths.py          # 包根、默认配置、默认存档目录、默认沙箱根
+│   ├── paths.py          # 包根、默认配置、默认存档目录、默认沙箱根、归档目录
+│   ├── recall.py         # recallContext 工具：检索历史归档片段
 │   ├── skills.py         # Agent Skills：SKILL.md 扫描、清单注入、loadSkill / createSkill
 │   ├── session.py        # AgentSession / CancelToken：流式、工具循环、存档提交
+│   ├── sessions.py       # 会话事件日志：.agents/sessions/*.jsonl（/new /save /resume /export）
 │   ├── transcript.py     # chat_history/*.txt 存档（格式与旧版一致）
 │   ├── llm/              # 后端协议、请求/流式块类型、工具调用收集器
 │   ├── mcp/              # MCP 客户端：.mcp.json 解析、连接（stdio / HTTP / SSE）、工具注册
 │   └── tools/            # ToolSpec / ToolRegistry / 内置工具 / 文件工具（沙箱根注入）
 ├── tui/                  # 终端界面层：只做输入、展示与命令
 │   ├── app.py            # YenaiApp：线程模型、流式刷新、斜杠命令
+│   ├── commands.py       # 斜杠命令清单（补全菜单与帮助共用一份定义）
 │   ├── i18n.py           # 全部中文文案与错误码 -> 文案映射
-│   ├── screens/          # 配置弹窗（全中文）
-│   ├── widgets/          # 消息卡片、可折叠的工具调用卡片、多行输入框
+│   ├── screens/          # 配置页、首次运行提示框、历史会话列表（全中文）
+│   ├── widgets/          # 消息卡片、工具卡片、多行输入框、命令候选菜单、MCP 边栏
 │   ├── styles.tcss       # 界面样式（角色色条、工具卡片配色）
 │   └── __main__.py       # python -m tui
 ├── tests/                # 无网络测试：FakeBackend + Textual run_test
@@ -37,8 +44,9 @@ YenaiAgent/
 └── .agents/skills/       # 本机技能目录；MCP 配置 .mcp.json 也在其中（首次启动生成模板）
 ```
 
-`config.ini`、`chat_history/`、本地技能目录 `.agents/` 与各类缓存由**仓库根目录**的
-`.gitignore` 统一忽略，不会提交到仓库。MCP 配置 `.mcp.json` 就放在技能目录里（本机文件，
+`config.ini`、`chat_history/`、本地技能目录 `.agents/`、上下文归档 `.agents/context/`、
+会话日志 `.agents/sessions/`
+与各类缓存由**仓库根目录**的 `.gitignore` 统一忽略，不会提交到仓库。MCP 配置 `.mcp.json` 就放在技能目录里（本机文件，
 同样不入库）：首次启动时自动生成模板，之后按本机情况增删 Server 即可。不要把私有
 endpoint 或密钥写进会提交的文件（HTTP 鉴权用 `${环境变量}` 引用）。
 
@@ -65,15 +73,26 @@ python main.py --workspace F:\your\project    # 启动时指定工作区（默�
 python main.py --skills-dir D:\my-skills       # 额外技能根目录（可重复）
 ```
 
-首次启动没有 `config.ini` 时，会弹出中文配置页，填写：
+首次启动（当前目录没有 `config.ini`）时不会直接进聊天界面，而是：
 
-- 接口地址（BaseURL）
-- API 密钥（APIKey，输入时隐藏）
-- 模型名称（ModelName）
+1. 在 `YenaiAgent/config.ini` 生成一份**完整模板**：每个配置项都带注释和示例值，
+   接口 / 密钥 / 模型先填 mock 值（`https://api.example.com/v1`、`sk-mock-replace-me`、
+   `mock-model`）；
+2. 弹出提示框，说明文件已生成、把示例值改成真实值后重新启动，然后退出；
+3. 改完配置重新运行即进入 TUI；示例值没改时，启动后仍会再提醒一次。
 
-保存后写入 `YenaiAgent/config.ini`（已被仓库根 `.gitignore` 忽略，不会提交）。
+模板由 `core/config.py:render_config_template()` 生成，覆盖 7 个配置段：`[llm]`（接口、
+密钥、模型、请求超时、输出上限、历史轮数、工具轮数、连续重复调用上限、System Prompt）、
+`[context]`（上下文窗口、默认窗口、警告阈值、压缩目标 / 上限 / 超时、归档目录、回查
+条数与长度）、`[session]`（会话日志目录、旧存档目录、AGENTS.md 文件名与长度上限）、
+`[tools]`（搜索 / 抓网页 / 命令行的超时与上限）、`[search]`、`[mcp]`（配置路径、连接 /
+调用超时、输出上限）、`[skills]`（技能根目录，可重复）。
 
-也可以手动创建：
+代码里不再硬编码这些数字：`core/config.py` 的 `AppConfig` 每个字段都有默认值，配置文件
+只覆盖想改的那几项；缺项、空值、类型不对会给出指向具体键名的中文错误。`/config` 只改
+`[llm]` 三项，保存时其余段落原样保留。`config.ini` 已被仓库根 `.gitignore` 忽略。
+
+最小的 `config.ini`（其余项全部走默认值）：
 
 ```ini
 [llm]
@@ -86,6 +105,9 @@ max_tool_rounds = 40
 
 # 可选：单次回复的输出上限，单位 token（默认 4096；含工具参数，调小会让长文件写入被截断）
 max_tokens = 4096
+
+# 可选：当前模型的上下文窗口大小，单位 token（不填则按模型名猜，猜不到按 128k 并标「默认」）
+context_window = 128000
 
 # 可选：联网搜索工具 searchWeb 使用百度千帆「智能搜索生成」接口
 [search]
@@ -110,15 +132,23 @@ baidu_qianfan_api_key = your-baidu-key
 - `Ctrl+C`：正在回答时中断；空闲时退出。
 - `Ctrl+Q`：退出。
 - `Ctrl+L`：清屏（不影响上下文）。
-- 命令：
-  - `/help` 查看帮助
-  - `/clear` 清屏（保留上下文）
-  - `/reset` 清空上下文并换新存档
-  - `/model` 查看当前模型；`/model 名称` 切换模型（保留上下文，同时写回 config.ini）
-  - `/workspace` 查看当前工作区；`/workspace 目录` 切换工作区（保留上下文）
-  - `/skills` 查看已加载的 Agent Skills 技能、扫描目录与跳过原因
-  - `/config` 重新打开配置页（保存后换新会话）
-  - `/exit` 退出
+- 命令（输入 `/` 会弹出补全面板：`↑` / `↓` 选择、`Tab` 补全、`Enter` 执行、`Esc` 收起）：
+  - 会话：`/new` 新建会话（当前会话先写盘）、`/resume` 历史会话面板、`/sessions` 列出
+    历史会话、`/save` 手动保存、`/export [目录]` 导出 Markdown、`/reset` 清空上下文
+    并换新会话文件
+  - 上下文：`/compact` 手动压缩（原始记录归档到 `.agents/context/`，摘要替换历史）、
+    `/status` 一次看全模型 / 工作区 / 会话 / 上下文 / MCP / AGENTS.md
+  - 配置与能力：`/config` 重开配置页、`/model [名称]` 查看或切换模型、
+    `/workspace [目录]` 查看或切换工作区、`/skills` 技能清单、`/mcp` MCP 服务与工具、
+    `/tools` 全部已注册工具
+  - 其他：`/help` 帮助、`/clear` 清屏（保留上下文）、`/quit`（同 `/exit`）退出
+- `/resume` 面板：`↑` / `↓` 选择，`Enter` 恢复（恢复前自动保存当前会话），`Esc` 取消；
+  列表里当前会话带 `▶`，其余显示编号、时间、轮数与首条用户消息的标题。
+- 会话是持续追加的：每次问答都写进 `.agents/sessions/<编号>.jsonl`，`/new` 换一个新
+  编号，`/resume` 从旧文件的 `user` / `assistant` 事件重建上下文（压缩点从摘要重开）。
+- 命令补全：输入 `/` 弹出命令候选（命令名 + 一句话说明），继续输入按前缀过滤；
+  `Tab` 补全（带参数的命令会补出空格，如 `/model `），`Enter` 直接执行高亮命令，
+  `Esc` 收起候选。候选来自 `tui/commands.py` 的唯一一份命令表，新增命令补一条即可。
 
 ### 工作区
 
@@ -170,7 +200,7 @@ baidu_qianfan_api_key = your-baidu-key
 
 ## 工具
 
-共 18 个（装配了技能库时；不带技能库则为 16 个），前 13 个的顺序与旧版一致；接入 MCP
+共 19 个（装配了技能库时；不带技能库则为 18 个，少一个 `loadSkill`），前 13 个的顺序与旧版一致；接入 MCP
 Server 时，每个 Server 的工具会在 `list_tools` 之前**动态追加**，不占下面的固定编号：
 
 1. `get_date`：当前本地日期、时间、星期（纯 Python，不依赖 `date` 命令）
@@ -191,7 +221,8 @@ Server 时，每个 Server 的工具会在 `list_tools` 之前**动态追加**�
     `TMP`/`TEMP` 指到工作区内的 `.cli-tmp`（部分 CLI 写系统临时目录会被拒绝）
 16. `loadSkill`：加载 Agent Skills 技能的 `SKILL.md` 或技能目录内的其他文件（见「技能」）
 17. `createSkill`：按自然语言要求新建 Agent Skills 技能，生成规范的 `SKILL.md`（见「技能」）
-18. `list_tools`：列出所有工具
+18. `recallContext`：检索上下文归档里的原始记录（`id` 可选、`text` 必填，见「上下文压缩与历史检索」）
+19. `list_tools`：列出所有工具
 
 MCP 工具默认沿用 Server 里的工具名；与本地工具或别的 Server 重名时自动加前缀
 （`工具名` → `服务名__工具名`），仍冲突再补 `_2`、`_3`。
@@ -233,6 +264,116 @@ MCP 工具默认沿用 Server 里的工具名；与本地工具或别的 Server 
 只处理纯文本（UTF-8 / UTF-16 / GB18030，最大 2 MB）；删除根目录、重命名覆盖已有文件都会被拒绝。
 沙箱根默认为项目目录，`--workspace` / `/workspace` 可切换到其他目录（见「工作区」）。
 
+## 上下文压缩与历史检索（第十一次课）
+
+长对话迟早会撞上模型的上下文窗口。这一版给 YenaiAgent 加了四条互相配合的能力：
+**用量监控 → 原始归档 → 摘要替换 → 归档检索**，全部用纯 Python 与普通文件实现，
+不引入向量数据库、Embedding 或任何检索框架。
+
+### 一、顶部的上下文占用条
+
+消息区与状态栏之间常驻一行：
+
+```
+上下文 12.3k / 128k（默认）· 已占用 9.6%
+```
+
+- 左边是**当前会话已占用**的 token，口径与实际发出去的请求完全一致：System Prompt、
+  技能清单、工具定义，加最近 `history_turns` 轮历史（默认 10 轮）。工具调用与工具结果
+  只在当轮请求里存在、下一轮不再发送，所以不计入常驻窗口——它们进 `.agents/context/`
+  归档，但不占上下文。占用条因此不会因为一次读文件、跑命令就虚高一大截。
+- 优先用模型接口返回的用量（请求带 `stream_options={"include_usage": true}` 时，
+  流的最后一块带 `usage.prompt_tokens`），并补上这条请求之后才生成的那条回答，
+  否则数字总是落后一轮，越聊越像「变少了」。
+- 接口不给用量时改本地估算：中文按 **1.6 字 ≈ 1 token**、其余 3.5 字符 ≈ 1 token
+  （实测 tokenizer 的经验密度；早先按「1 字 1 token」会把中文高估约 1.5 倍）。
+  估算期数字前面带 `~`，一眼能分辨是本地估算还是接口真实值，估算值同样驱动 70% 阈值。
+- 窗口大小按 `[llm] context_window` → 内置模型名对照表（gpt-4o / gpt-4.1 / deepseek /
+  claude / gemini / qwen / glm / kimi 等）→ 128k 的顺序确定；走到最后一步才显示「（默认）」。
+- 占用 ≥ 70% 变黄，≥ 90% 变红。
+
+### 二、70% 阈值：警告 + 暂停输入
+
+每次模型响应结束（以及每次处理新提示词之前）都会重算一次用量。达到窗口的 70% 时：
+
+1. 对话区插入一条黄色警告，提示执行 `/compact`；
+2. 会话进入「待压缩」状态，**普通提示词不再被接受**（提交后只会收到「上下文已达阈值，
+   请先执行 `/compact`」）；
+3. 压缩成功后自动解除限制，可以继续提问。
+
+相关常量都在 `core/constants.py`：`CONTEXT_WARN_RATIO = 0.7`、
+`DEFAULT_CONTEXT_WINDOW = 128_000`、`COMPACT_TARGET_TOKENS = 5_000`。
+
+### 三、`/compact` 的执行流程
+
+```
+用户输入 /compact
+  ├─ 进入压缩状态：期间不接受新提示词，也不发起任何工具调用
+  ├─ 1. 归档：把当前会话的原始消息写成 .agents/context/20261105-103150.jsonl
+  ├─ 2. 摘要：只发一次 LLM 请求（历史消息 + 压缩 Prompt，tools 为空）
+  ├─ 3. 替换：history 换成「摘要(user) + 已读取摘要(assistant)」，System Prompt 与工具定义保留
+  └─ 4. 收尾：摘要末尾追加归档说明，解除输入限制，刷新占用条
+```
+
+- **先归档，再压缩**：归档写盘失败就直接报错，原上下文一字不动，`/compact` 可以重试。
+- 摘要请求**不带工具**，这就是「压缩期间禁止 Function Calling」的落地点：这一轮模型只能
+  写摘要，不能调工具，也不会进入工具循环。
+- 摘要为空（接口异常、被截断）算失败：保留原上下文、提示错误，允许重新执行 `/compact`。
+- 压缩期间按 `Ctrl+C` 或直接退出都不影响已归档的文件。
+
+### 四、归档文件长什么样
+
+`<项目根>/.agents/context/` 下每压缩一次生成一个文件，文件名就是归档编号：
+`YYYYMMDD-HHMMSS.jsonl`（同一秒内重复时补 `-2`、`-3`）。一行一条消息，保持原始顺序：
+
+```json
+{"index": 1, "role": "user", "content": "2048 是闰年吗？", "model": "gpt-4o-mini"}
+{"index": 2, "role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "isLeapyear", "arguments": "{\"year\": 2048}"}}]}
+{"index": 3, "role": "tool", "tool_call_id": "call_1", "name": "isLeapyear", "content": "2048 年是闰年"}
+```
+
+角色、正文、工具调用参数、工具返回结果与消息顺序全部保留；写入用「临时文件 + `os.replace`」
+的原子方式，中途失败不会留下半个文件。`.agents/` 整个目录已被 `.gitignore` 忽略。
+
+### 五、摘要里写了什么
+
+压缩使用 `core/compaction.py:COMPACTION_PROMPT`（一名「AI Agent 的上下文管理助手」），
+要求输出约 5000 tokens 的 Markdown 摘要，重点保留：用户目标与约束、已完成的工作、
+当前进度与未解决问题、关键文件路径 / 函数名 / 命令 / 错误信息、关键决策与原因、下一步任务；
+并要求区分「已验证的事实」与「尚未验证的推测」，不把计划说成已完成。
+
+摘要写回 history 时末尾会多一段归档说明：
+
+> 此前上下文已于 2026-11-05 10:31:50 完成压缩，原始上下文保存在编号为 20261105-103150
+> 的归档文件中。如需查找历史信息，请使用 recallContext 工具。
+
+于是模型即使看不到原始对话，也知道「细节去哪找」。
+
+### 六、`recallContext`：按需回查原始记录
+
+| 参数 | 说明 |
+| --- | --- |
+| `id` | 可选，归档编号（如 `20261105-103150`）。给了就只查这一个文件 |
+| `text` | 必填，要查找的关键词或文本片段 |
+
+- 纯 Python 全文检索：整句命中优先；命中太少时按空格、逗号、顿号、分号拆词再匹配，
+  按命中次数排序。
+- 每条命中返回 `archive`（编号）、`line`（第几条消息）、`role`、`score`，以及前后各 120 字的
+  `snippet`；最多 6 条、合计 3600 字符，超出时 `truncated` 为真——**避免检索结果反过来
+  把上下文再次塞满**。
+- 不传 `id` 就搜 `.agents/context/` 下所有归档；编号非法（含 `/`、`..`）或文件不存在时
+  返回 `ok=false` 的中文错误，不会抛异常打断这一轮。
+- 摘要缺细节时模型会自己调用它；也可以在提示里直接要求「去归档里找 XXX」。
+
+### 七、可选配置
+
+```ini
+[llm]
+# 可选：覆盖当前模型的上下文窗口大小（token）；不填则按模型名猜，猜不到按 128k
+context_window = 128000
+```
+
+填负数或非数字时保存阶段就报错，不会带着坏值启动。
 ## 技能（Agent Skills）
 
 启动时按 **程序启动目录**（不是工作区）扫描技能根目录下的技能子目录，扫描只进行一次；
@@ -364,11 +505,85 @@ roots = D:\my-skills; F:\yenaipaim\Plugin\.agents\skills
 - 模板里的 `PeiHospitalMCP`（`Pet/` 里的宠物医院 MCP）默认监听 9000 端口，需要先跑起来，
   否则启动摘要会显示连接失败——不影响其他功能；服务起来后重启 YenaiAgent 即自动接入。
 
+## 第十二次课：会话、配置与 MCP 边栏
+
+这一版把「一次运行 = 一个会话」变成可持续、可恢复的工作流，同时把散落在代码里的数字搬进
+`config.ini`。
+
+### 一、会话命令与会话日志
+
+每次问答都会追加到 `.agents/sessions/<编号>.jsonl`（`core/sessions.py:SessionStore`）：
+
+- 首行是 header：`version`、编号、创建时间、模型、工作区、System Prompt；
+- 之后是 `user` / `assistant` / `tool` 事件，字段与内存消息一一对应（工具事件带名称、
+  参数、结果、耗时）；
+- 压缩时写一条 compact 事件（归档编号 + 摘要），恢复会话时以它为起点重建，之前的消息不再
+  重复进入上下文；
+- AGENTS.md 注入写一条 `system` 事件（`kind = "agents_md"`），只在会话开头出现一次。
+
+编号是 `YYYYMMDD-HHMMSS`，同一秒重复创建会补 `-2`、`-3`，不覆盖（`SessionStore._new_id`）。
+写入是「追加 + 原子替换」，坏行（例如进程被杀留下的半截 JSON）读取时跳过，不影响其余消息。
+
+命令：
+
+- `/new`：先把当前会话落盘，再清空上下文、换新编号（旧文件仍留在列表里）；
+- `/save`：立即写盘并给出文件路径；
+- `/sessions`：按新→旧列出编号、时间、轮数与标题（取首条用户消息，压缩过的会话取摘要首行）；
+- `/resume`：`SessionScreen` 面板，`↑` / `↓` 选择、`Enter` 恢复、`Esc` 取消，当前会话带 `▶`；
+  恢复时把事件重建成上下文，并沿用原编号继续追加；
+- `/export [目录]`：导出 Markdown（`## 你` / `## AI` 分节，工具调用以引用块出现），
+  默认写到 `chat_history/`；
+- `/status`：会话编号、文件路径、模型、上下文占用、MCP 数量、是否已注入 AGENTS.md。
+
+### 二、把参数搬进 config.ini
+
+`core/config.py` 现在只有一处配置语义：`AppConfig` 是一组带默认值的 dataclass 字段，
+`[llm]` / `[context]` / `[session]` / `[tools]` / `[search]` / `[mcp]` / `[skills]` 七个段的
+水位线都从它读。规则：
+
+- 段或键缺失 → 用默认值；空值 → 用默认值；类型不对 → `AgentError`（`CONFIG_INVALID`），
+  错误信息带 `[段] 键名`；
+- 命令行参数（`--workspace`、`--skills-dir`）优先于配置文件；
+- 新增配置只改 `AppConfig` 的字段，并在 `render_config_template()` 里补一行注释示例，
+  业务代码不用动。
+
+`render_config_template()` 生成完整模板；首次启动缺 `config.ini` 时由
+`tui/screens/first_run_screen.py` 弹提示（文件已生成、改完 mock 值后重新启动），随后程序
+退出，不进聊天界面。
+
+### 三、MCP 边栏：先起界面，后连服务
+
+MCP 连接涉及网络和子进程，同步等待会卡住首屏。`McpHub.start_async()` 在后台线程里执行
+`start()`，界面先用空状态渲染（`McpSidebar` 显示「正在加载 MCP 服务…」），连完后由 worker
+把结果交回主线程，`tui/app.py` 再调 `show_hub(hub)` 重绘边栏。边栏每个 Server 一行：
+名称 + 工具数，状态分连接中 / 成功 / 失败 / 禁用，下面缩进列出工具名，超过
+`MAX_TOOLS_PER_SERVER` 折叠成「… 其余 N 个」。工具注册仍走 `hub.register_into(registry)`，
+边栏只读不写。
+
+### 四、AGENTS.md：一次注入，全程复用
+
+工作区根目录有 `AGENTS.md`（文件名可配 `[session] agents_md`）时，会话建好后读取一次，
+由 `core/agentsmd.py:wrap_project_prompt()` 包成带分隔标记的项目约定块，然后：
+
+1. 作为一条 system 消息进入本轮请求（只出现在会话开头，不追加到对话消息里）；
+2. 原文写入会话事件日志（`kind="agents_md"`），`/resume` 不重新读文件——文件后来被删掉
+   也能恢复；
+3. 之后每轮 System Prompt 逐字相同，提示词缓存可以命中。
+
+超过 `agents_md_max_chars`（默认 20000）会截断并注明。
+
+### 五、`/` 补全菜单
+
+`tui/commands.py` 维持唯一一份 `COMMANDS` 表（18 条：命令名、一句话说明、是否带参数），
+`tui/widgets/command_menu.py` 只负责展示与高亮。输入 `/` 展开全部；继续输入按前缀过滤
+（Backspace 回退）；`↑` / `↓` 循环高亮；`Tab` 补全（带参数命令补出空格）；`Enter` 执行并
+清空输入；`Esc` 收起但保留文本；正在回答或压缩中不弹。
+
 ## 开发与测试
 
 ```bash
 pip install -r requirements.txt   # 运行依赖与测试依赖都在这一份里
-pytest tests -q          # 当前 187 个用例，约 20 秒
+pytest tests -q          # 当前 243 个用例，约 25 秒
 ```
 
 - 网络完全用 `tests/support.py` 里的 `FakeBackend` 脚本化替身，不发起真实请求；
@@ -385,8 +600,25 @@ pytest tests -q          # 当前 187 个用例，约 20 秒
   配置解析；`createSkill` 部分覆盖名称规范化、`SKILL.md` 生成（frontmatter 可回读、
   正文保留、LF 无 BOM）、缺根自动创建、已存在不覆盖、跨根重名拒绝与端到端调用。
 - TUI 用 Textual 的 `run_test` 无头驱动，覆盖流式渲染、消息卡片与工具卡片（含耗时、
-  参数/结果分节、点击折叠）、错误提示、命令、首次配置页，以及「回复必须逐块出现」
-  的流式回归测试（慢速后端断言中间态）。
+  参数/结果分节、点击折叠）、错误提示、命令（`/new` `/save` `/resume` `/sessions`
+  `/export` `/status` `/tools`）、首次运行提示与模板生成、`/resume` 面板的键盘交互与
+  Esc 取消、MCP 边栏占位，以及「回复必须逐块出现」的流式回归测试（慢速后端断言中间态）。
+- `tests/test_compact.py` 覆盖上下文压缩全链路：token 估算与窗口解析（默认 128k 的标记）、
+  归档 JSONL 的编号 / 字段 / 顺序与同秒不撞号、`path_for` 的路径穿越拦截、`recallContext`
+  的命中与截断（≤6 条、≤3600 字符）与非法编号、压缩成功后 history 只剩摘要 + 归档说明、
+  压缩失败保留原上下文、70% 阈值触发警告并暂停输入，占用口径（只算实际发送的
+  System Prompt + 最近 N 轮历史 + 工具定义，工具消息不计入、真实用量补上本轮回答）、
+  估算密度的中文压缩比、`~` 估算标记的出现与消失，以及 TUI 占用条与 `/compact` 命令。
+- `tests/test_sessions.py` 覆盖会话事件日志：header 与编号、同秒不撞号、`messages()` 只取
+  user/assistant 并跳过工具事件、压缩点之后从摘要重开、列表排序与标题、坏行跳过、
+  AGENTS.md 事件与原文回读、`attach` 后续写同一文件、`path_for` 拒绝路径穿越、Markdown
+  导出，以及 `enabled=False` 时全部 noop。
+- `tests/test_session.py` 的 AGENTS.md 用例：注入一次并在下一轮逐字复用（日志里只有一条
+  `agents_md`）、没有文件时不注入、文件删除后 `restore` 仍能从日志取回并注入下一轮。
+- `tests/test_command_menu.py` 覆盖 `/` 补全菜单：`/` 展开全部命令、前缀过滤与
+  Backspace 回退、带参数命令的 Tab 补全（补出空格）、Enter 直接执行并清空输入、
+  ↑↓ 循环高亮、Esc 收起但保留文本、带参数/普通文本不弹、完整命令名不弹、
+  只读时不弹。
 
 ## 与 Practice02 的差异
 
@@ -402,12 +634,27 @@ pytest tests -q          # 当前 187 个用例，约 20 秒
 - 新增 Agent Skills：技能目录（默认 `.agents/skills/`，可配置多个根）里的技能按
   `SKILL.md` frontmatter 自动登记，清单进 System Prompt，正文按需经 `loadSkill`
   加载（Practice02 没有的能力）。
-- 工具从 13 个扩展到 18 个：新增 `searchWeb`（联网搜索）、`fetchWeb`（抓网页）、
-  `RunCli`（执行本地命令行）、`loadSkill` / `createSkill`（技能加载与创建），
-  仍然全部通过注册表统一描述、执行与错误归一。
+- 工具从 13 个扩展到 19 个：新增 `searchWeb`（联网搜索）、`fetchWeb`（抓网页）、
+  `RunCli`（执行本地命令行）、`loadSkill` / `createSkill`（技能加载与创建）、
+  `recallContext`（回查上下文归档），仍然全部通过注册表统一描述、执行与错误归一。
 - 新增 MCP 客户端：技能目录里的 `.mcp.json`（首个技能根，缺失时自动生成模板）列出
   的 Server 启动时连接，`list_tools()` 的结果动态注册成工具，调用经 stdio /
   Streamable HTTP / SSE 转发；连不上只影响该 Server（Practice02 没有的能力）。
+
+- 新增上下文压缩（第十一次课）：TUI 常驻占用条（当前 token / 窗口 / 百分比，窗口未知时
+  按 128k 并标「默认」）、70% 阈值警告并暂停输入、`/compact` 归档 + 摘要替换、
+  `recallContext` 回查 `.agents/context/` 里的原始记录（Practice02 没有的能力）。
+- 新增 `/` 命令补全菜单：输入 `/` 就列出全部命令与一句话说明，继续输入按前缀过滤，
+  ↑↓ 选择、Tab 补全（带参数命令补出空格）、Enter 直接执行、Esc 收起；命令表只维护
+  `tui/commands.py` 一份，菜单（`tui/widgets/command_menu.py`）只负责展示与高亮。
+- 新增会话层（第十二次课）：`.agents/sessions/*.jsonl` 事件日志，以及 `/new`、`/resume`、
+  `/sessions`、`/save`、`/export`、`/status`；恢复会话时从事件重建上下文，压缩点之后从
+  摘要重开（Practice02 没有的能力）。
+- 参数配置化：所有水位线搬进 `config.ini` 的 7 个段，`core/config.py:AppConfig` 提供默认值，
+  缺项 / 空值 / 类型错误都有明确中文提示；首次启动自动生成完整模板并弹框提示重启。
+- TUI 增加 MCP 边栏：后台线程连接 MCP Server，先出界面后刷新，每个 Server 显示状态与工具
+  清单，边栏只读。
+- 会话首次加载时注入 `AGENTS.md`：只注入一次、原文写入事件日志、后续轮次复用同一段文本。
 
 ## 后续扩展
 
@@ -419,3 +666,11 @@ pytest tests -q          # 当前 187 个用例，约 20 秒
 4. 需要时调用 `CancelToken.cancel()` 中断。
 
 Web / Desktop 层可以照搬 `tui/` 的组织方式，而不改 `core/`。
+
+上下文这块还有明显的升级空间，适合作为下一个练习：
+
+- 检索目前是整句 + 拆词的字面匹配，可换成 BM25 / 向量检索（归档格式不用动，只改
+  `core/archive.py:ContextArchive.search` 的实现）；
+- 摘要固定 5000 tokens 且只压一次，可按归档链做「摘要的摘要」，或按主题分段摘要；
+- 归档现在是纯文本 JSONL，可以加索引文件（编号 → 时间、消息数、模型）让 `/archives`
+  之类的命令直接列历史。

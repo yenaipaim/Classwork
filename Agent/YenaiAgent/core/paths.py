@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .constants import CONTEXT_ARCHIVE_DIR
+
 # Agent/YenaiAgent/
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 
@@ -14,3 +16,9 @@ DEFAULT_CONFIG_PATH = PACKAGE_ROOT / "config.ini"
 DEFAULT_HISTORY_DIR = PACKAGE_ROOT / "chat_history"
 # 文件工具的沙箱根：默认整个工程目录，可由 --workspace 覆盖
 DEFAULT_WORKSPACE_ROOT = PACKAGE_ROOT
+
+
+def context_archive_dir(project_root: Path | str | None = None) -> Path:
+    """上下文归档目录：默认 `<项目根>/.agents/context/`。"""
+    base = PACKAGE_ROOT if project_root is None else Path(project_root)
+    return base / CONTEXT_ARCHIVE_DIR

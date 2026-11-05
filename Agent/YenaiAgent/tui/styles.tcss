@@ -121,6 +121,31 @@ Screen {
     color: $warning;
 }
 
+#commands {
+    display: none;
+    height: auto;
+    max-height: 12;
+    margin: 0 1;
+    background: $panel;
+    border: round $accent;
+}
+
+#context {
+    height: 1;
+    background: $panel;
+    color: $text-muted;
+    padding: 0 1;
+    text-style: bold;
+}
+
+#context.warn {
+    color: $warning;
+}
+
+#context.danger {
+    color: $error;
+}
+
 #status {
     height: 1;
     background: $panel;
@@ -182,3 +207,60 @@ ConfigScreen {
 .dialog Button {
     margin-left: 1;
 }
+
+/* 主区域：左聊天、右边栏（MCP 服务器与工具） */
+#body {
+    height: 1fr;
+}
+
+#body #chat {
+    width: 1fr;
+}
+
+#sidebar {
+    width: 34;
+    height: 1fr;
+    border-left: round $panel;
+    background: $panel;
+    padding: 0 1;
+}
+
+#mcp-sidebar-title {
+    height: 1;
+    text-style: bold;
+    color: $accent;
+}
+
+#mcp-sidebar-body {
+    height: auto;
+    color: $text-muted;
+}
+
+SessionScreen {
+    align: center middle;
+}
+
+.session-dialog {
+    width: 84;
+}
+
+.session-dialog #session-list {
+    height: auto;
+    max-height: 16;
+    background: $surface;
+    border: round $panel;
+}
+
+.session-dialog #session-list > .option-list--option-highlighted {
+    background: $accent;
+    color: $text;
+}
+
+FirstRunScreen {
+    align: center middle;
+}
+
+.first-run-dialog {
+    width: 76;
+}
+

@@ -17,6 +17,12 @@ class ErrorCode(str, Enum):
     REQUEST_FAILED = "request_failed"
     TOOL_ROUND_LIMIT = "tool_round_limit"
     INTERRUPTED = "interrupted"
+    # 上下文压缩相关：归档写失败、压缩流程失败、上下文超阈值暂停输入
+    ARCHIVE_FAILED = "archive_failed"
+    COMPACT_FAILED = "compact_failed"
+    CONTEXT_LIMIT = "context_limit"
+    # 会话事件日志相关：新建 / 保存 / 恢复会话失败
+    SESSION_FAILED = "session_failed"
     UNKNOWN = "unknown"
 
 

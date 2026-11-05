@@ -35,11 +35,14 @@ class CommandRunner:
         *,
         cwd: str | None = None,
         timeout: float = CLI_TIMEOUT,
+        max_timeout: float = CLI_MAX_TIMEOUT,
         max_output: int = CLI_MAX_OUTPUT,
         runner: Runner | None = None,
     ) -> None:
         self._cwd = cwd
         self._timeout = float(timeout)
+        # 单次调用允许的最大超时（模型可以用 timeout 参数往上要，但到顶为止）
+        self._max_timeout = max(1.0, float(max_timeout))
         self._max_output = int(max_output)
         self._runner = runner or _run_process
 
@@ -48,7 +51,10 @@ class CommandRunner:
     ) -> dict[str, Any]:
         """执行一次命令；正常结束返回 ok 与输出，异常也返回结构化结果。"""
         argv = _build_argv(command, args)
-        limit = _clamp_timeout(timeout if timeout is not None else self._timeout)
+        limit = min(
+            _clamp_timeout(timeout if timeout is not None else self._timeout),
+            self._max_timeout,
+        )
         display = _display(argv)
 
         try:

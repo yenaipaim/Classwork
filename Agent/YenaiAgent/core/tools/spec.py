@@ -56,6 +56,10 @@ class ToolRegistry:
         self._tools[tool.name] = tool
         return self
 
+    def remove(self, name: str) -> bool:
+        """按名字摘掉一个工具（MCP 异步加载后重新注册时用）。"""
+        return self._tools.pop(name, None) is not None
+
     def get(self, name: str) -> ToolSpec | None:
         return self._tools.get(name)
 

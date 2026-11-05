@@ -8,11 +8,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
+from .archive import ContextArchive
 from .config import AppConfig
+from .constants import CONTEXT_ARCHIVE_DIR, SESSIONS_DIR
 from .llm.backend import LlmBackend, OpenAIBackend
 from .mcp import McpConfig, McpHub, discover_mcp_config, load_mcp_config
-from .paths import DEFAULT_HISTORY_DIR, DEFAULT_WORKSPACE_ROOT
+from .paths import DEFAULT_HISTORY_DIR, DEFAULT_WORKSPACE_ROOT, context_archive_dir
+from .recall import build_recall_tool
 from .session import AgentSession
+from .sessions import SessionStore
 from .skills import (
     SkillLibrary,
     build_create_skill_tool,
@@ -36,12 +40,14 @@ def build_registry(
     cli_runner: CommandRunner | None = None,
     skills: SkillLibrary | None = None,
     mcp: McpHub | None = None,
+    archive: ContextArchive | None = None,
 ) -> ToolRegistry:
     """按旧版顺序注册文件/计算工具，末尾追加联网、网页、命令行、技能、MCP 与工具清单。
 
     ``skills`` 非空时追加 ``loadSkill``（按需加载）与 ``createSkill``（新建技能）
     两个工具；``mcp`` 非空时把已连接的 MCP 工具追加在技能之后。``list_tools``
-    始终最后注册，才能把前面的工具都列进去。
+    始终最后注册，才能把前面的工具都列进去。``archive`` 非空时再追加
+    ``recallContext``（按关键词检索压缩前的上下文归档）。
     """
     registry = ToolRegistry()
     registry.register(
@@ -87,6 +93,9 @@ def build_registry(
     # MCP 工具排在技能之后、list_tools 之前；连不上的 Server 已在 hub 里被跳过
     if mcp is not None:
         mcp.register_into(registry)
+    # 归档目录存在时才注册 recallContext：没有归档就没有可检索的历史
+    if archive is not None:
+        registry.register(build_recall_tool(archive))
     registry.register(
         ToolSpec(
             name="list_tools",
@@ -110,6 +119,7 @@ def create_session(
     skill_roots: Sequence[str] | None = None,
     mcp_config: McpConfig | Path | str | None = None,
     mcp: McpHub | None = None,
+    context_dir: Path | str | None = None,
 ) -> AgentSession:
     """装配一个可直接驱动的会话；测试可注入 backend / registry / skills / MCP。
 
@@ -130,11 +140,34 @@ def create_session(
     # 抓取与命令行工具不依赖配置，随注册表按新工作区重新创建（RunCli 的
     # cwd 会变成新工作区）。
     search_client = SearchClient(
-        config.search_api_key, endpoint=config.search_endpoint
+        config.search_api_key,
+        endpoint=config.search_endpoint,
+        timeout=config.search_timeout,
+        top_k=config.search_top_k,
     )
+    base_root = Path.cwd() if project_root is None else Path(project_root)
+    # 上下文归档目录与会话同寿命：换工作区不影响它（归档属于会话，不属于工作区）
+    if context_dir is not None:
+        archive_dir = Path(context_dir)
+    else:
+        archive_dir = context_archive_dir(base_root)
+        if config.archive_dir and Path(config.archive_dir) != Path(CONTEXT_ARCHIVE_DIR):
+            archive_dir = Path(config.archive_dir).expanduser()
+            if not archive_dir.is_absolute():
+                archive_dir = base_root / archive_dir
+    archive = ContextArchive(
+        archive_dir,
+        max_snippets=config.recall_max_snippets,
+        max_chars=config.recall_max_chars,
+    )
+    # 会话事件日志：/new、/resume、/save 的事实来源
+    sessions_dir = Path(config.sessions_dir or SESSIONS_DIR).expanduser()
+    if not sessions_dir.is_absolute():
+        sessions_dir = base_root / sessions_dir
+    session_store = SessionStore(sessions_dir, config.model_name)
     # Skill 清单只在初始化时扫描一次；切换工作区重建注册表时复用同一份清单
     if skills is None:
-        base = Path.cwd() if project_root is None else project_root
+        base = base_root
         # 显式参数优先，其次读配置；都为空时就是默认的 .agents/skills
         configured = tuple(skill_roots) if skill_roots else tuple(config.skill_roots)
         skills = SkillLibrary(base, roots=resolve_skill_roots(base, configured))
@@ -142,13 +175,28 @@ def create_session(
     # MCP 连接与配置只在会话创建时建立一次；切换工作区重建注册表时复用同一批会话
     hub = mcp
     if hub is None:
-        parsed = _resolve_mcp_config(mcp_config, project_root, skills.skills_dir)
+        source = mcp_config if mcp_config is not None else (config.mcp_config or None)
+        parsed = _resolve_mcp_config(source, project_root, skills.skills_dir)
         hub = McpHub(parsed)
-        hub.start()
+        # 异步连接：TUI 先进场，连上后再把工具挂进注册表、刷新边栏
+        hub.start_async()
 
     def registry_factory(root: Path | str) -> ToolRegistry:
         return build_registry(
-            root, search_client=search_client, skills=skills, mcp=hub
+            root,
+            search_client=search_client,
+            fetcher=WebFetcher(
+                timeout=config.fetch_timeout, max_chars=config.fetch_max_chars
+            ),
+            cli_runner=CommandRunner(
+                cwd=str(root),
+                timeout=config.cli_timeout,
+                max_timeout=config.cli_max_timeout,
+                max_output=config.cli_max_output,
+            ),
+            skills=skills,
+            mcp=hub,
+            archive=archive,
         )
 
     if registry is None:
@@ -162,6 +210,9 @@ def create_session(
         registry_factory=registry_factory,
         skills=skills,
         mcp=hub,
+        archive=archive,
+        sessions=session_store,
+        project_root=base_root,
     )
 
 

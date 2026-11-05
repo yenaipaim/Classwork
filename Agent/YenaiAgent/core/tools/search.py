@@ -43,11 +43,14 @@ class SearchClient:
         *,
         endpoint: str = SEARCH_ENDPOINT,
         timeout: float = SEARCH_TIMEOUT,
+        top_k: int = SEARCH_TOP_K,
         transport: Transport | None = None,
     ) -> None:
         self._api_key = (api_key or "").strip()
         self._endpoint = endpoint or SEARCH_ENDPOINT
         self._timeout = timeout
+        # 默认返回条数也来自 config.ini，调用方没给 count 时用它
+        self._top_k = max(1, min(SEARCH_MAX_TOP_K, int(top_k)))
         self._transport = transport or _post_json
 
     def search(self, query: str, count: int | None = None) -> list[SearchResult]:
@@ -61,7 +64,7 @@ class SearchClient:
                 "baidu_qianfan_api_key 后重启程序"
             )
 
-        limit = _clamp_count(count)
+        limit = _clamp_count(count, self._top_k)
         payload = {
             "messages": [{"role": "user", "content": text}],
             "stream": False,
@@ -230,9 +233,9 @@ def _clean_snippet(value: Any) -> str:
     return text
 
 
-def _clamp_count(count: Any) -> int:
+def _clamp_count(count: Any, default: int = SEARCH_TOP_K) -> int:
     try:
         value = int(count)
     except (TypeError, ValueError):
-        return SEARCH_TOP_K
+        return default
     return max(1, min(SEARCH_MAX_TOP_K, value))

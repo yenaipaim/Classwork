@@ -10,7 +10,7 @@ core/TUI 分层重构。三者共用流式输出、多轮上下文和本地历�
 |------|------|------|
 | `Practice01/` | 多轮对话、流式输出、日期与闰年工具 | [Practice01/README.md](Practice01/README.md) |
 | `Practice02/` | 在 Practice01 基础上增加 10 个本地文件操作工具 | [Practice02/README.md](Practice02/README.md) |
-| `YenaiAgent/` | Practice02 的分层重写：`core` + Textual TUI，工具与沙箱保留，并支持 Agent Skills 技能加载 | [YenaiAgent/README.md](YenaiAgent/README.md) |
+| `YenaiAgent/` | Practice02 的分层重写：`core` + Textual TUI，19 个本地工具 + MCP 动态工具、Agent Skills、上下文压缩与历史检索、会话日志与 `/resume`、全量 `config.ini`、`/` 命令补全 | [YenaiAgent/README.md](YenaiAgent/README.md) |
 
 ## 启动
 
@@ -23,7 +23,9 @@ python Agent\YenaiAgent\main.py
 ```
 
 - Practice01 / Practice02：输入 `/exit` 退出
-- YenaiAgent：`/exit` 或 `Ctrl+Q` 退出，`Ctrl+C` 中断当前回复
+- YenaiAgent：`/exit` 或 `Ctrl+Q` 退出，`Ctrl+C` 中断当前回复；输入 `/` 弹出命令候选
+  （↑↓ 选择、Tab 补全、Enter 执行）；上下文接近窗口上限时用 `/compact` 压缩；
+  `/new` 换新会话、`/resume` 从历史列表恢复（↑↓ 选择、Enter 恢复、Esc 取消）、`/save` 落盘
 
 ## 共同特性
 
@@ -40,10 +42,15 @@ python Agent\YenaiAgent\main.py
 | 界面 | 终端逐行打印 + 转圈动画 | Textual 全屏 TUI：消息卡片、工具卡片、配置页 |
 | 依赖方向 | — | 严格 `tui → core`，core 不依赖任何 UI 库 |
 | 装配方式 | 模块级全局 | `core/factory.py` 注入 backend / registry / 沙箱根 |
-| 测试 | 手工验证 | `tests/` 覆盖 core 与 TUI（pytest，无头模式，158 个用例） |
-| 工具 | 13 个 | 17 个：在旧版基础上增加 `searchWeb`（联网搜索）、`fetchWeb`（抓网页正文）、`RunCli`（本地命令行）、`loadSkill`（按需加载 Skill） |
-| 技能 | 无 | Agent Skills：扫描技能目录、清单进 System Prompt、正文按需加载 |
-| 输入 | `input()` 单行 | 多行输入框：`Enter` 发送、`Ctrl+J` 换行，卡片式消息流 |
+| 测试 | 手工验证 | `tests/` 覆盖 core 与 TUI（pytest，无头模式，243 个用例） |
+| 工具 | 13 个 | 19 个：在旧版基础上增加 `searchWeb`（联网搜索）、`fetchWeb`（抓网页正文）、`RunCli`（本地命令行）、`loadSkill` / `createSkill`（技能加载与创建）、`recallContext`（回查上下文归档）；接入 MCP Server 时再动态追加 |
+| 技能 | 无 | Agent Skills：扫描技能目录、清单进 System Prompt、正文按需加载，还能让模型用 `createSkill` 现建 |
+| MCP | 无 | 读技能目录的 `.mcp.json`，把外部 MCP Server 的工具注册成普通函数工具 |
+| 上下文 | 只保留最近 N 轮，超限即丢 | 常驻占用条（token / 窗口 / 百分比）、70% 警告并暂停输入、`/compact` 归档到 `.agents/context/` 后摘要替换历史、`recallContext` 回查原始记录 |
+| 会话 | 仅内存，退出即散 | `.agents/sessions/*.jsonl` 事件日志：`/new` `/save` `/resume` `/sessions` `/export`，恢复时从事件重建上下文，压缩点之后从摘要重开 |
+| 配置 | 三行 `[llm]` | `config.ini` 七个段覆盖全部水位线，`AppConfig` 提供默认值；缺文件时生成完整模板并提示重启 |
+| 项目约定 | 无 | 工作区 `AGENTS.md` 一次注入、原文写入会话日志、后续轮次复用同一段文本 |
+| 输入 | `input()` 单行 | 多行输入框：`Enter` 发送、`Ctrl+J` 换行，卡片式消息流；输入 `/` 弹出命令补全 |
 | 工作区 | 固定为项目目录 | `--workspace` 启动指定，`/workspace` 运行时切换（文件沙箱 + `RunCli` 目录） |
 
 ## 配置
@@ -57,8 +64,8 @@ api_key = your-api-key
 model_name = your-model
 ```
 
-Practice01 / Practice02 在配置缺失时用终端问答创建；YenaiAgent 会弹出中文配置页
-（也可手写该文件）。`config.ini`、`chat_history/` 与技能目录 `.agents/` 都属于本地
+Practice01 / Practice02 在配置缺失时用终端问答创建；YenaiAgent 缺少 `config.ini` 时先在同目录
+生成一份带注释的完整模板（mock 值），弹框提示改成真实值后重新启动，然后退出（也可手写该文件）。`config.ini`、`chat_history/` 与技能目录 `.agents/` 都属于本地
 运行数据，已在仓库根 `.gitignore` 中排除，不应提交。
 
 ### YenaiAgent 的技能目录
